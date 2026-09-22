@@ -2,12 +2,13 @@
 Woolworths API Deals Scraper - The "All Specials" Edition
 ---------------------------------------------------------
 Uses the backend's native 'SPECIALS' filter to capture every single 
-discounted item. Includes Webshare proxy integration to bypass anti-bot blocks.
+discounted item. Includes Webshare static proxy integration to bypass anti-bot blocks.
 """
 
 import csv
 import requests
 import urllib3
+import random
 
 # Suppress SSL warnings in GitHub Actions logs
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
@@ -80,14 +81,28 @@ def fetch_page(page_index):
         "query": QUERY
     }
 
-    # Webshare Proxy Configuration using provided credentials
-    proxy_url = "http://ouswikyu:4luytcyxhn0o@p.webshare.io:80"
+    # Your 10 dedicated Webshare proxies
+    proxy_list = [
+        "http://ouswikyu:4luytcyxhn0o@31.59.20.176:6754",
+        "http://ouswikyu:4luytcyxhn0o@45.38.107.97:6014",
+        "http://ouswikyu:4luytcyxhn0o@198.105.121.200:6462",
+        "http://ouswikyu:4luytcyxhn0o@64.137.96.74:6641",
+        "http://ouswikyu:4luytcyxhn0o@198.23.243.226:6361",
+        "http://ouswikyu:4luytcyxhn0o@38.154.185.97:6370",
+        "http://ouswikyu:4luytcyxhn0o@84.247.60.125:6095",
+        "http://ouswikyu:4luytcyxhn0o@142.111.67.146:5611",
+        "http://ouswikyu:4luytcyxhn0o@191.96.254.138:6185",
+        "http://ouswikyu:4luytcyxhn0o@31.58.9.4:6077"
+    ]
+
+    # Randomly select a proxy for this specific request
+    proxy_url = random.choice(proxy_list)
     proxies = {
         "http": proxy_url,
         "https": proxy_url
     }
 
-    print(f"Requesting page {page_index} (batch of {PAGE_SIZE})...")
+    print(f"Requesting page {page_index} (batch of {PAGE_SIZE}) using proxy {proxy_url.split('@')[1]}...")
     
     try:
         response = requests.post(
