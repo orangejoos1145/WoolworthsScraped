@@ -1,0 +1,778 @@
+"""
+Woolworths Deals Filterer - Restricted Content & Full Categories v5
+-------------------------------------------------------------------
+Implements strict content filtering to drop alcohol, tobacco, and 
+restricted personal care items, while mapping all final Woolworths categories.
+"""
+
+import csv
+import json
+import os
+from datetime import datetime
+
+INPUT_CSV = "woolworths_deals.csv"
+OUTPUT_HTML = "index.html"
+
+def load_rows():
+    if not os.path.exists(INPUT_CSV):
+        print(f"No {INPUT_CSV} found — run your scraper first.")
+        raise SystemExit(1)
+
+    rows = []
+    with open(INPUT_CSV, newline="", encoding="utf-8") as f:
+        for row in csv.DictReader(f):
+            old_price = row.get("Old Price") or ""
+            sale_price = row.get("Discounted Price") or ""
+            discount_pct = row.get("Discount %") or ""
+
+            try:
+                old_price = float(old_price) if old_price != "" else None
+            except ValueError:
+                old_price = None
+            try:
+                sale_price = float(sale_price) if sale_price != "" else None
+            except ValueError:
+                sale_price = None
+            try:
+                discount_pct = float(discount_pct) if discount_pct != "" else None
+            except ValueError:
+                discount_pct = None
+
+            rows.append({
+                "title": row.get("Title", "").strip(),
+                "old_price": old_price,
+                "sale_price": sale_price,
+                "discount_pct": discount_pct,
+                "link": row.get("Link", "").strip(),
+                "promo": row.get("Promo Note", "").strip(),
+            })
+    return rows
+
+HTML_TEMPLATE = """<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
+<title>Woolies Premium Deals</title>
+<link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;600;700;800&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --primary: #10b981;
+    --primary-dark: #059669;
+    --primary-glow: rgba(16, 185, 129, 0.2);
+    --bg-color: #0c1017;
+    --bg-gradient: linear-gradient(135deg, #0c1017 0%, #111823 100%);
+    --card-bg: #141b26;
+    --card-border: rgba(255, 255, 255, 0.1);
+    --card-border-hover: rgba(16, 185, 129, 0.4);
+    --text-main: #f8fafc;
+    --text-muted: #94a3b8;
+    --danger: #ef4444;
+    --danger-glow: rgba(239, 68, 68, 0.15);
+    --accent-light: rgba(16, 185, 129, 0.1);
+    --header-bg: rgba(12, 16, 23, 0.85);
+    --shadow-md: 0 4px 20px 0 rgba(0, 0, 0, 0.5);
+    --input-bg: rgba(255, 255, 255, 0.08);
+    --input-border: rgba(255, 255, 255, 0.2);
+  }
+
+  [data-theme="light"] {
+    --primary: #178841;
+    --primary-dark: #126b33;
+    --primary-glow: rgba(23, 136, 65, 0.2);
+    --bg-color: #f4f6f8;
+    --bg-gradient: linear-gradient(135deg, #f4f6f8 0%, #e2e8f0 100%);
+    --card-bg: #ffffff;
+    --card-border: rgba(0, 0, 0, 0.1);
+    --card-border-hover: rgba(23, 136, 65, 0.4);
+    --text-main: #0f172a;
+    --text-muted: #64748b;
+    --danger: #dc2626;
+    --danger-glow: rgba(220, 38, 38, 0.1);
+    --accent-light: #eaf7ec;
+    --header-bg: rgba(255, 255, 255, 0.85);
+    --shadow-md: 0 4px 20px 0 rgba(31, 38, 135, 0.05);
+    --input-bg: rgba(0, 0, 0, 0.05);
+    --input-border: rgba(0, 0, 0, 0.15);
+  }
+
+  * { box-sizing: border-box; font-family: 'Poppins', sans-serif; -webkit-tap-highlight-color: transparent; }
+  body { 
+    margin: 0; background: var(--bg-gradient); color: var(--text-main); 
+    display: flex; flex-direction: column; min-height: 100vh; overflow-x: hidden;
+    transition: background 0.4s ease;
+  }
+
+  header {
+    background: var(--header-bg); backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px);
+    border-bottom: 1px solid var(--card-border); padding: 1rem 2rem;
+    display: flex; align-items: center; justify-content: space-between;
+    position: sticky; top: 0; z-index: 50; gap: 1rem;
+    transition: background 0.4s ease;
+  }
+  .header-brand { font-size: 1.3rem; font-weight: 800; display: flex; align-items: center; gap: 8px; color: var(--primary); letter-spacing: 0.5px; }
+  
+  .header-search { flex: 1; max-width: 500px; position: relative; }
+  .header-search input {
+    width: 100%; padding: 0.7rem 1.2rem 0.7rem 2.6rem; border: 1px solid var(--input-border); 
+    border-radius: 99px; font-size: 0.95rem; outline: none; background: var(--input-bg); 
+    color: var(--text-main); transition: all 0.3s;
+  }
+  .header-search input:focus { border-color: var(--primary); box-shadow: 0 0 12px var(--primary-glow); background: var(--card-bg); }
+  [data-theme="dark"] .header-search input { background: rgba(0,0,0,0.3); }
+  [data-theme="dark"] .header-search input:focus { background: rgba(0,0,0,0.5); }
+  .header-search i { position: absolute; left: 1rem; top: 50%; transform: translateY(-50%); color: var(--text-muted); font-size: 0.95rem; }
+
+  .header-controls { display: flex; align-items: center; gap: 1rem; }
+  .timestamp-badge { background: var(--accent-light); border: 1px solid var(--primary-glow); padding: 5px 12px; border-radius: 99px; font-size: 0.75rem; color: var(--primary); display: flex; align-items: center; gap: 6px; font-weight: 600; white-space: nowrap; }
+  .theme-toggle { background: var(--card-bg); border: 1px solid var(--card-border); color: var(--text-main); width: 38px; height: 38px; border-radius: 50%; cursor: pointer; display: flex; align-items: center; justify-content: center; font-size: 1.1rem; transition: all 0.3s ease; }
+  .theme-toggle:hover { background: var(--primary); color: white; border-color: var(--primary); box-shadow: 0 0 10px var(--primary-glow); }
+  .mobile-menu-btn { display: none; background: transparent; border: none; color: var(--text-main); font-size: 1.4rem; cursor: pointer; padding: 5px; }
+
+  .container { display: flex; max-width: 1500px; margin: 1.5rem auto; padding: 0 1.5rem; gap: 2rem; flex: 1; width: 100%; position: relative; }
+
+  .sidebar { width: 280px; flex-shrink: 0; background: var(--card-bg); border-radius: 12px; padding: 1.5rem; box-shadow: var(--shadow-md); border: 1px solid var(--card-border); align-self: flex-start; position: sticky; top: 90px; transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1), background 0.4s ease; }
+  .sidebar-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 1.2rem; border-bottom: 1px solid var(--card-border); padding-bottom: 0.8rem; }
+  .sidebar-header h2 { margin: 0; font-size: 1.1rem; font-weight: 600; }
+  
+  .filter-group { margin-bottom: 1.5rem; }
+  .filter-group label { display: block; font-size: 0.8rem; font-weight: 600; margin-bottom: 0.6rem; color: var(--text-muted); text-transform: uppercase; letter-spacing: 1px; }
+  .filter-group select { width: 100%; padding: 0.7rem; border: 1px solid var(--input-border); border-radius: 8px; font-size: 0.9rem; background: var(--input-bg); color: var(--text-main); outline: none; }
+  [data-theme="dark"] .filter-group select { background: rgba(0,0,0,0.3); }
+
+  .toggle-container { display: flex; align-items: center; justify-content: space-between; background: var(--input-bg); padding: 10px 14px; border-radius: 10px; border: 1px solid var(--input-border); }
+  [data-theme="dark"] .toggle-container { background: rgba(0,0,0,0.3); }
+  .toggle-container span { font-size: 0.85rem; font-weight: 600; color: var(--text-main); }
+  .switch { position: relative; display: inline-block; width: 42px; height: 24px; }
+  .switch input { opacity: 0; width: 0; height: 0; }
+  .slider { position: absolute; cursor: pointer; top: 0; left: 0; right: 0; bottom: 0; background-color: var(--input-border); transition: .4s; border-radius: 34px; }
+  .slider:before { position: absolute; content: ""; height: 16px; width: 16px; left: 3px; bottom: 4px; background-color: white; transition: .4s; border-radius: 50%; box-shadow: 0 1px 3px rgba(0,0,0,0.3); }
+  input:checked + .slider { background-color: var(--primary); }
+  input:checked + .slider:before { transform: translateX(20px); background-color: white; }
+
+  input[type=range] { -webkit-appearance: none; width: 100%; background: transparent; margin-top: 5px; }
+  input[type=range]::-webkit-slider-thumb { -webkit-appearance: none; height: 18px; width: 18px; border-radius: 50%; background: var(--primary); cursor: pointer; margin-top: -6px; box-shadow: 0 0 10px var(--primary-glow); }
+  input[type=range]::-webkit-slider-runnable-track { width: 100%; height: 6px; cursor: pointer; background: var(--input-border); border-radius: 3px; }
+
+  .category-nav details { margin-bottom: 0.4rem; }
+  .category-nav summary, .category-nav li { font-weight: 600; padding: 0.7rem 0.9rem; cursor: pointer; border-radius: 8px; transition: all 0.2s; list-style: none; display: flex; align-items: center; gap: 10px; color: var(--text-main); font-size: 0.9rem; }
+  .category-nav summary::-webkit-details-marker { display: none; }
+  .category-nav summary i.cat-icon { font-size: 1rem; color: var(--primary); width: 20px; text-align: center; }
+  .category-nav summary .arrow { margin-left: auto; font-size: 0.75rem; color: var(--text-muted); transition: transform 0.3s; }
+  .category-nav details[open] summary .arrow { transform: rotate(180deg); }
+  
+  .category-nav summary:hover, .category-nav li:hover { background: var(--input-bg); }
+  .category-nav summary.active, .category-nav li.active { background: var(--accent-light); border: 1px solid var(--primary-glow); color: var(--primary); }
+  .category-nav ul { list-style: none; padding: 0; margin: 0.3rem 0 0.3rem 1.2rem; border-left: 2px solid var(--input-border); }
+  .category-nav li { padding: 0.5rem 0.9rem; font-size: 0.85rem; color: var(--text-muted); }
+
+  main { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+  .results-header { display: flex; justify-content: space-between; align-items: flex-end; margin-bottom: 0.5rem; padding-bottom: 0.8rem; border-bottom: 1px solid var(--card-border); flex-wrap: wrap; gap: 1rem; }
+  .results-title-group h2 { margin: 0 0 4px 0; font-size: 1.4rem; font-weight: 700; color: var(--primary); }
+  .results-title-group span { color: var(--text-muted); font-size: 0.85rem; font-weight: 600; }
+  .results-controls { display: flex; align-items: center; gap: 1rem; flex-wrap: wrap; }
+  .per-page-selector { display: flex; align-items: center; gap: 8px; font-size: 0.85rem; color: var(--text-muted); font-weight: 600; }
+  .per-page-selector select { padding: 4px 8px; border-radius: 6px; border: 1px solid var(--input-border); background: var(--input-bg); color: var(--text-main); font-weight: 600; outline: none; cursor: pointer; }
+
+  .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(250px, 1fr)); gap: 1rem; margin-top: 1rem; }
+  
+  .card { background: var(--card-bg); border: 1px solid var(--card-border); border-radius: 10px; padding: 1rem; display: flex; flex-direction: column; gap: 0.8rem; opacity: 0; transform: translateY(15px); transition: opacity 0.4s ease, transform 0.4s ease, border-color 0.3s ease, background 0.4s ease; }
+  .card.show { opacity: 1; transform: translateY(0); }
+  .card:hover { border-color: var(--card-border-hover); box-shadow: 0 4px 15px rgba(0,0,0,0.1); }
+  .card-top { display: flex; gap: 0.8rem; align-items: flex-start; }
+  .card-icon-wrapper { width: 50px; height: 50px; flex-shrink: 0; background: var(--input-bg); border: 1px solid var(--input-border); border-radius: 10px; display: flex; align-items: center; justify-content: center; color: var(--primary); font-size: 1.4rem; }
+  .card-badges { display: flex; flex-direction: column; gap: 0.4rem; flex: 1; align-items: flex-start; }
+  .badge-promo { background: var(--accent-light); color: var(--primary-dark); padding: 3px 8px; border-radius: 5px; font-size: 0.7rem; font-weight: 700; border: 1px solid var(--primary-glow); display: inline-flex; align-items: center; gap: 4px; }
+  [data-theme="dark"] .badge-promo { color: var(--primary); }
+  .badge-discount { background: var(--danger-glow); color: var(--danger); padding: 3px 8px; border-radius: 5px; font-size: 0.7rem; font-weight: 700; border: 1px solid rgba(239, 68, 68, 0.3); display: inline-flex; align-items: center; gap: 4px; }
+  .card h3 { font-size: 0.95rem; margin: 0; line-height: 1.3; color: var(--text-main); font-weight: 700; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+  .price-box { margin-top: auto; padding-top: 0.6rem; border-top: 1px dashed var(--input-border); display: flex; flex-direction: column; }
+  .price-sale { font-size: 1.6rem; font-weight: 800; color: var(--text-main); letter-spacing: -0.5px; line-height: 1; }
+  .price-old { font-size: 0.8rem; color: var(--text-muted); text-decoration: line-through; margin-top: 2px; }
+  .btn-view { text-align: center; text-decoration: none; background: var(--input-bg); color: var(--text-main); border: 1px solid var(--card-border); padding: 0.6rem; border-radius: 6px; font-weight: 600; transition: all 0.2s; font-size: 0.8rem; display: flex; align-items: center; justify-content: center; gap: 6px; margin-top: 0.2rem; text-transform: uppercase; }
+  .btn-view:hover { background: var(--card-border-hover); border-color: var(--primary); color: white; }
+  [data-theme="light"] .btn-view:hover { color: white; }
+
+  .pagination-container { display: flex; justify-content: center; margin: 1rem 0; }
+  .pagination { display: flex; justify-content: center; gap: 0.4rem; flex-wrap: wrap; }
+  .page-btn { background: var(--card-bg); border: 1px solid var(--card-border); padding: 0.5rem 0.9rem; border-radius: 6px; cursor: pointer; color: var(--text-main); font-weight: 600; font-size: 0.85rem; transition: all 0.2s; }
+  .page-btn:hover:not(:disabled) { border-color: var(--primary); color: var(--primary); }
+  .page-btn.active { background: var(--primary); color: white; border-color: var(--primary); }
+  .page-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+
+  .mobile-overlay { display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.6); z-index: 80; backdrop-filter: blur(4px); opacity: 0; transition: opacity 0.3s; }
+  .mobile-overlay.show { display: block; opacity: 1; }
+  #emptyState { text-align: center; padding: 4rem 1rem; color: var(--text-muted); display: none; background: var(--input-bg); border-radius: 12px; border: 1px dashed var(--card-border); margin-top: 1rem; }
+  #emptyState i { font-size: 3rem; color: var(--input-border); margin-bottom: 1rem; }
+
+  @media (max-width: 900px) {
+    header { padding: 1rem; flex-wrap: wrap; }
+    .header-controls { order: 2; }
+    .header-search { order: 3; width: 100%; max-width: 100%; margin: 0.5rem 0 0 0; }
+    .mobile-menu-btn { display: block; }
+    .timestamp-badge { display: none; }
+    .container { margin: 1rem auto; padding: 0 1rem; }
+    .sidebar { position: fixed; top: 0; left: -100%; height: 100vh; z-index: 100; width: 85%; max-width: 300px; border-radius: 0; margin: 0; overflow-y: auto; padding: 2rem 1.5rem; }
+    .sidebar.open { transform: translateX(100%); }
+    .sidebar-close-btn { display: block !important; background: none; border: none; color: var(--text-main); font-size: 1.5rem; cursor: pointer; }
+    .grid { grid-template-columns: 1fr; } 
+  }
+  .sidebar-close-btn { display: none; }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="header-brand">
+    <button class="mobile-menu-btn" id="mobileMenuBtn"><i class="fa-solid fa-bars-staggered"></i></button>
+    <i class="fa-solid fa-apple-whole"></i> Woolies
+  </div>
+  
+  <div class="header-search">
+    <i class="fa-solid fa-search"></i>
+    <input type="text" id="searchInput" placeholder="Search products, brands, cuts...">
+  </div>
+
+  <div class="header-controls">
+    <div class="timestamp-badge">
+      <i class="fa-solid fa-clock-rotate-left"></i> __TIMESTAMP__
+    </div>
+    <button id="themeToggle" class="theme-toggle" aria-label="Toggle Dark/Light Mode">
+      <i class="fa-solid fa-sun"></i>
+    </button>
+  </div>
+</header>
+
+<div class="mobile-overlay" id="mobileOverlay"></div>
+
+<div class="container">
+  <aside class="sidebar" id="sidebar">
+    <div class="sidebar-header">
+      <h2><i class="fa-solid fa-sliders"></i> Filters</h2>
+      <button class="sidebar-close-btn" id="closeSidebarBtn"><i class="fa-solid fa-xmark"></i></button>
+    </div>
+
+    <div class="filter-group toggle-group">
+      <div class="toggle-container">
+        <span>Hide No-Discount</span>
+        <label class="switch">
+          <input type="checkbox" id="hideNoDiscount" checked>
+          <span class="slider"></span>
+        </label>
+      </div>
+    </div>
+
+    <div class="filter-group">
+      <label>Sort By</label>
+      <select id="sortSelect">
+        <option value="discount_desc" selected>Biggest Discount (%)</option>
+        <option value="price_asc">Lowest Price</option>
+        <option value="price_desc">Highest Price</option>
+        <option value="title_asc">Name (A-Z)</option>
+      </select>
+    </div>
+
+    <div class="filter-group">
+      <label>Min Discount: <span id="minVal" style="color:var(--primary); font-size:1rem;">0%</span></label>
+      <input type="range" id="minDiscount" min="0" max="80" step="5" value="0">
+    </div>
+
+    <div class="filter-group">
+      <label>Categories</label>
+      <div class="category-nav" id="categoryNav">
+        <!-- JS Injected -->
+      </div>
+    </div>
+  </aside>
+
+  <main>
+    <div class="results-header">
+      <div class="results-title-group">
+        <h2 id="resultsHeading">All Deals</h2>
+        <span id="resultCount">0 items</span>
+      </div>
+      <div class="results-controls">
+        <div class="per-page-selector">
+          <label for="perPageSelect">Per page:</label>
+          <select id="perPageSelect">
+            <option value="10">10</option>
+            <option value="25" selected>25</option>
+            <option value="50">50</option>
+            <option value="75">75</option>
+            <option value="100">100</option>
+            <option value="200">200</option>
+          </select>
+        </div>
+        <div class="pagination" id="paginationTop"></div>
+      </div>
+    </div>
+    
+    <div class="grid" id="grid"></div>
+    
+    <div id="emptyState">
+      <i class="fa-solid fa-box-open"></i>
+      <h3 style="font-size: 1.2rem; margin:0 0 8px 0;">No matching deals</h3>
+      <p style="font-size: 0.85rem;">Adjust your filters, toggle off 'Hide No-Discount', or search something else.</p>
+    </div>
+
+    <div class="pagination-container">
+      <div class="pagination" id="paginationBottom"></div>
+    </div>
+  </main>
+</div>
+
+<script>
+  // ----------------------------------------------------
+  // RESTRICTED CONTENT FILTER
+  // Automatically drops items matching these keywords
+  // ----------------------------------------------------
+  const RESTRICTED_WORDS = [
+      "wine", "beer", "vodka", "whiskey", "whisky", "rum", "gin", "cider", "bourbon", 
+      "liquor", "tequila", "cigarette", "tobacco", "vape", "smoking", 
+      "condom", "lubricant", "pregnancy", "period", "tampon", "pad"
+  ];
+  
+  // Only load deals that DO NOT contain restricted words in their title
+  const RAW_DEALS = __DEALS_JSON__;
+  const DEALS = RAW_DEALS.filter(d => {
+      const titleLower = d.title.toLowerCase();
+      return !RESTRICTED_WORDS.some(word => titleLower.includes(word));
+  });
+
+  // Theme Toggle
+  let isDark = true;
+  const themeToggle = document.getElementById('themeToggle');
+  themeToggle.addEventListener('click', () => {
+    isDark = !isDark;
+    document.documentElement.setAttribute('data-theme', isDark ? 'dark' : 'light');
+    themeToggle.innerHTML = isDark ? '<i class="fa-solid fa-sun"></i>' : '<i class="fa-solid fa-moon"></i>';
+  });
+
+  // Mobile Sidebar
+  const sidebar = document.getElementById('sidebar');
+  const overlay = document.getElementById('mobileOverlay');
+  const mobileBtn = document.getElementById('mobileMenuBtn');
+  const closeBtn = document.getElementById('closeSidebarBtn');
+
+  function openSidebar() { sidebar.classList.add('open'); overlay.classList.add('show'); document.body.style.overflow = 'hidden'; }
+  function closeSidebar() { sidebar.classList.remove('open'); overlay.classList.remove('show'); document.body.style.overflow = ''; }
+  mobileBtn.addEventListener('click', openSidebar);
+  closeBtn.addEventListener('click', closeSidebar);
+  overlay.addEventListener('click', closeSidebar);
+
+  // Animations
+  const observer = new IntersectionObserver((entries) => {
+    entries.forEach(entry => {
+      if (entry.isIntersecting) {
+        entry.target.classList.add('show');
+        observer.unobserve(entry.target);
+      }
+    });
+  }, { threshold: 0.05, rootMargin: "0px 0px 50px 0px" });
+
+  const grid = document.getElementById('grid');
+  const emptyState = document.getElementById('emptyState');
+  const searchInput = document.getElementById('searchInput');
+  const sortSelect = document.getElementById('sortSelect');
+  const minDiscount = document.getElementById('minDiscount');
+  const hideNoDiscount = document.getElementById('hideNoDiscount');
+  const minVal = document.getElementById('minVal');
+  const resultCount = document.getElementById('resultCount');
+  const resultsHeading = document.getElementById('resultsHeading');
+  const paginationTop = document.getElementById('paginationTop');
+  const paginationBottom = document.getElementById('paginationBottom');
+  const categoryNav = document.getElementById('categoryNav');
+  const perPageSelect = document.getElementById('perPageSelect');
+
+  let filteredData = [];
+  let currentPage = 1;
+  let itemsPerPage = parseInt(perPageSelect.value);
+  let activeCategoryKeywords = [];
+  let activeCategoryName = "All Deals";
+
+  perPageSelect.addEventListener('change', (e) => {
+    itemsPerPage = parseInt(e.target.value);
+    currentPage = 1; 
+    renderGrid();
+  });
+
+  // Fully Mapped Woolworths Categories
+  const categories = [
+    { name: 'Dinner', icon: 'fa-utensils', keys: ['meal', 'dinner', 'heat', 'salad'],
+      sub: [
+        { name: 'Ready Meals', keys: ['ready meal', 'prepared'] },
+        { name: 'Heat & Eat', keys: ['heat', 'pie', 'quiche'] },
+        { name: 'Sides & Salads', keys: ['side', 'salad', 'slaw'] },
+        { name: 'Desserts', keys: ['dessert', 'pudding'] }
+      ]
+    },
+    { name: 'Fruit & Veg', icon: 'fa-carrot', keys: ['fruit', 'veg', 'apple', 'banana', 'carrot', 'tomato', 'potato', 'onion', 'berries', 'floral', 'herb'],
+      sub: [
+        { name: 'Fruit', keys: ['fruit', 'apple', 'banana', 'berry', 'citrus'] },
+        { name: 'Vegetables', keys: ['veg', 'carrot', 'potato', 'onion', 'broccoli'] },
+        { name: 'Prepared Fruit & Veg', keys: ['prepared', 'cut'] },
+        { name: 'Fresh Salad & Herbs', keys: ['salad', 'herb', 'parsley', 'basil'] },
+        { name: 'Organic', keys: ['organic'] },
+        { name: 'The Odd Bunch', keys: ['odd bunch'] },
+        { name: 'Floral', keys: ['flower', 'floral', 'bouquet'] }
+      ]
+    },
+    { name: 'Meat & Poultry', icon: 'fa-drumstick-bite', keys: ['beef', 'chicken', 'lamb', 'pork', 'venison', 'mince', 'sausage', 'meat', 'poultry'],
+      sub: [
+        { name: 'Beef', keys: ['beef', 'steak'] },
+        { name: 'Chicken & Poultry', keys: ['chicken', 'poultry', 'turkey'] },
+        { name: 'Lamb', keys: ['lamb'] },
+        { name: 'Pork', keys: ['pork', 'bacon'] },
+        { name: 'Venison & Game', keys: ['venison', 'game'] },
+        { name: 'Mince & Patties', keys: ['mince', 'pattie', 'burger'] },
+        { name: 'Sausages', keys: ['sausage', 'saveloy'] },
+        { name: 'BBQ & Roast', keys: ['bbq', 'roast'] },
+        { name: 'Offal & Bones', keys: ['offal', 'bone', 'liver'] },
+        { name: 'Plant Based', keys: ['plant based', 'vegan', 'vegetarian'] }
+      ]
+    },
+    { name: 'Fish & Seafood', icon: 'fa-fish-fins', keys: ['fish', 'seafood', 'salmon', 'prawn', 'tuna'],
+      sub: [
+        { name: 'Fish', keys: ['fish'] },
+        { name: 'Salmon', keys: ['salmon'] },
+        { name: 'Prawns & Seafood', keys: ['prawn', 'seafood', 'mussel', 'squid'] }
+      ]
+    },
+    { name: 'Fridge & Deli', icon: 'fa-cheese', keys: ['cheese', 'milk', 'yoghurt', 'butter', 'deli', 'salami', 'egg', 'cream', 'juice'],
+      sub: [
+        { name: 'Eggs, Butter & Spreads', keys: ['egg', 'butter', 'margarine', 'spread'] },
+        { name: 'Milk', keys: ['milk'] },
+        { name: 'Cheese', keys: ['cheese', 'brie', 'cheddar'] },
+        { name: 'Yoghurt & Desserts', keys: ['yoghurt', 'dessert'] },
+        { name: 'Cream & Custard', keys: ['cream', 'custard'] },
+        { name: 'Juice & Drinks', keys: ['juice', 'drink'] },
+        { name: 'Deli Meats & Seafood', keys: ['deli', 'salami', 'ham'] },
+        { name: 'Pasta, Pizza & Pastry', keys: ['pasta', 'pizza', 'pastry'] },
+        { name: 'Dips, Hummus & Nibbles', keys: ['dip', 'hummus', 'nibble', 'pate'] }
+      ]
+    },
+    { name: 'Bakery', icon: 'fa-bread-slice', keys: ['bread', 'wrap', 'roll', 'croissant', 'bagel', 'muffin', 'cake', 'pastry'],
+      sub: [
+        { name: 'Sliced & Packaged Bread', keys: ['bread', 'loaf', 'sliced'] },
+        { name: 'Buns, Rolls & Sticks', keys: ['bun', 'roll', 'stick'] },
+        { name: 'Wraps, Pita & Pizza Bases', keys: ['wrap', 'pita', 'pizza base'] },
+        { name: 'Pastries, Croissants', keys: ['pastry', 'croissant', 'danish'] },
+        { name: 'Cakes, Muffins & Desserts', keys: ['cake', 'muffin', 'dessert', 'tart'] },
+        { name: 'Bagels, Crumpets', keys: ['bagel', 'crumpet', 'pancake'] }
+      ]
+    },
+    { name: 'Frozen', icon: 'fa-snowflake', keys: ['frozen', 'ice cream', 'pizza', 'chips', 'sorbet'],
+      sub: [
+        { name: 'Frozen Vegetables', keys: ['frozen veg', 'pea', 'corn'] },
+        { name: 'Frozen Meat & Seafood', keys: ['frozen meat', 'frozen fish', 'frozen prawn'] },
+        { name: 'Frozen Meals & Snacks', keys: ['frozen meal', 'chip', 'wedge', 'snack'] },
+        { name: 'Ice Cream & Sorbet', keys: ['ice cream', 'sorbet', 'gelato'] },
+        { name: 'Pizza, Pastry & Bread', keys: ['frozen pizza', 'frozen pastry'] }
+      ]
+    },
+    { name: 'Pantry', icon: 'fa-jar', keys: ['sauce', 'cereal', 'pasta', 'rice', 'spread', 'can', 'snack', 'sweet', 'biscuit'],
+      sub: [
+        { name: 'Snacks & Sweets', keys: ['snack', 'sweet', 'chip', 'nut'] },
+        { name: 'Biscuits & Crackers', keys: ['biscuit', 'cracker', 'cookie'] },
+        { name: 'Tinned Foods & Packets', keys: ['tin', 'can', 'packet'] },
+        { name: 'Baking', keys: ['baking', 'flour', 'sugar', 'mix'] },
+        { name: 'Cereals & Spreads', keys: ['cereal', 'oat', 'spread', 'jam', 'peanut butter'] },
+        { name: 'Sauces & Pastes', keys: ['sauce', 'paste', 'mayo', 'ketchup'] },
+        { name: 'Pasta, Noodles & Grains', keys: ['pasta', 'noodle', 'rice', 'grain'] },
+        { name: 'Herbs, Spices & Stock', keys: ['herb', 'spice', 'stock', 'salt', 'pepper'] },
+        { name: 'Oil, Vinegar & Condiments', keys: ['oil', 'vinegar', 'condiment', 'dressing'] },
+        { name: 'International Foods', keys: ['international', 'asian', 'indian', 'mexican'] },
+        { name: 'Meal Kits', keys: ['meal kit'] }
+      ]
+    },
+    { name: 'Drinks', icon: 'fa-bottle-water', keys: ['drink', 'water', 'juice', 'coke', 'soda', 'coffee', 'tea'],
+      sub: [
+        { name: 'Coffee', keys: ['coffee', 'bean', 'capsule', 'instant'] },
+        { name: 'Tea & Milk Drinks', keys: ['tea', 'milk drink', 'milo'] },
+        { name: 'Soft Drinks', keys: ['soft drink', 'coke', 'lemonade', 'soda'] },
+        { name: 'Sports & Energy', keys: ['sport', 'energy', 'red bull', 'powerade'] },
+        { name: 'Juice, Cordial & Water', keys: ['juice', 'cordial', 'water', 'sparkling'] }
+      ]
+    },
+    { name: 'Health & Body', icon: 'fa-pump-soap', keys: ['shampoo', 'soap', 'clean', 'spray', 'wash', 'toothpaste', 'deodorant', 'skin'],
+      sub: [
+        { name: 'Bath, Shower & Soap', keys: ['bath', 'shower', 'soap', 'body wash'] },
+        { name: 'Hair Care', keys: ['hair', 'shampoo', 'conditioner'] },
+        { name: 'Dental & Oral Care', keys: ['dental', 'tooth', 'mouthwash'] },
+        { name: 'Deodorant & Body Sprays', keys: ['deodorant', 'spray', 'antiperspirant'] },
+        { name: 'Skin Care & Sun Care', keys: ['skin', 'sun', 'lotion', 'cream'] },
+        { name: 'Shaving & Hair Removal', keys: ['shave', 'razor'] },
+        { name: 'Medical, Vitamins & First Aid', keys: ['medical', 'vitamin', 'supplement', 'first aid', 'plaster'] }
+      ]
+    },
+    { name: 'Household', icon: 'fa-broom', keys: ['clean', 'spray', 'wash', 'toilet', 'laundry', 'kitchen', 'bathroom'],
+      sub: [
+        { name: 'Bathroom & Toilet', keys: ['bathroom', 'toilet', 'tissue'] },
+        { name: 'Kitchen', keys: ['kitchen', 'foil', 'wrap', 'bin liner'] },
+        { name: 'Laundry', keys: ['laundry', 'powder', 'liquid', 'softener'] },
+        { name: 'Cleaning', keys: ['cleaning', 'spray', 'wipe', 'sponge'] },
+        { name: 'Pest Control', keys: ['pest', 'insect', 'fly'] },
+        { name: 'Hardware & Auto', keys: ['hardware', 'auto', 'battery', 'lightbulb'] }
+      ]
+    },
+    { name: 'Baby & Child', icon: 'fa-baby-carriage', keys: ['baby', 'child', 'nappy', 'diaper', 'wipe', 'formula'],
+      sub: [
+        { name: 'Nappies & Wipes', keys: ['nappy', 'diaper', 'wipe'] },
+        { name: 'Baby Food & Formula', keys: ['baby food', 'formula', 'pouch'] },
+        { name: 'Bottles, Toys & Accessories', keys: ['bottle', 'toy', 'dummy', 'pacifier'] }
+      ]
+    }
+  ];
+
+  function getIconForTitle(title) {
+    const t = title.toLowerCase();
+    if (t.includes('beef') || t.includes('steak') || t.includes('mince')) return 'fa-cow';
+    if (t.includes('chicken') || t.includes('poultry')) return 'fa-drumstick-bite';
+    if (t.includes('lamb') || t.includes('pork') || t.includes('sausage') || t.includes('bacon')) return 'fa-bacon';
+    if (t.includes('fish') || t.includes('salmon') || t.includes('tuna') || t.includes('seafood')) return 'fa-fish';
+    if (t.includes('milk') || t.includes('cheese') || t.includes('butter') || t.includes('yoghurt')) return 'fa-cheese';
+    if (t.includes('chocolate') || t.includes('candy') || t.includes('sweet') || t.includes('lolly')) return 'fa-candy-cane';
+    if (t.includes('bread') || t.includes('wrap') || t.includes('roll')) return 'fa-bread-slice';
+    if (t.includes('apple') || t.includes('banana') || t.includes('fruit')) return 'fa-apple-whole';
+    if (t.includes('veg') || t.includes('carrot') || t.includes('potato') || t.includes('onion') || t.includes('lentil')) return 'fa-carrot';
+    if (t.includes('water') || t.includes('drink') || t.includes('juice') || t.includes('coke') || t.includes('soda')) return 'fa-bottle-water';
+    if (t.includes('ice cream') || t.includes('frozen')) return 'fa-ice-cream';
+    if (t.includes('coffee') || t.includes('tea')) return 'fa-mug-hot';
+    if (t.includes('pizza')) return 'fa-pizza-slice';
+    if (t.includes('can') || t.includes('sauce') || t.includes('spread') || t.includes('pasta')) return 'fa-jar';
+    if (t.includes('nappy') || t.includes('diaper') || t.includes('baby')) return 'fa-baby-carriage';
+    if (t.includes('clean') || t.includes('spray') || t.includes('laundry')) return 'fa-broom';
+    return 'fa-basket-shopping';
+  }
+
+  function initCategories() {
+    let html = '';
+    categories.forEach((cat) => {
+      const keys = cat.keys.join(',');
+      if (cat.sub) {
+        html += `<details>
+                   <summary onclick="toggleCategory('${cat.name}', '${keys}', this, event)">
+                     <i class="fa-solid ${cat.icon} cat-icon"></i> ${cat.name} <i class="fa-solid fa-chevron-down arrow"></i>
+                   </summary>
+                   <ul>`;
+        cat.sub.forEach(sub => {
+          html += `<li onclick="toggleCategory('${sub.name}', '${sub.keys.join(',')}', this, event)">${sub.name}</li>`;
+        });
+        html += `</ul></details>`;
+      } else {
+        html += `<details>
+                   <summary onclick="toggleCategory('${cat.name}', '${keys}', this, event)" class="no-sub">
+                     <i class="fa-solid ${cat.icon} cat-icon"></i> ${cat.name}
+                   </summary>
+                 </details>`;
+      }
+    });
+    categoryNav.innerHTML = html;
+  }
+
+  window.toggleCategory = function(name, keysString, element, event) {
+    if (event) {
+        event.preventDefault();
+        event.stopPropagation();
+    }
+
+    const isSummary = element.tagName.toLowerCase() === 'summary';
+    const detailsEl = isSummary ? element.parentElement : element.closest('details');
+
+    if (activeCategoryName === name) {
+        element.classList.remove('active');
+        activeCategoryName = "All Deals";
+        activeCategoryKeywords = [];
+        if (detailsEl) detailsEl.removeAttribute('open');
+    } else {
+        document.querySelectorAll('.category-nav li, .category-nav summary').forEach(el => el.classList.remove('active'));
+        element.classList.add('active');
+        activeCategoryName = name;
+        activeCategoryKeywords = keysString.split(',');
+        searchInput.value = ''; 
+
+        document.querySelectorAll('.category-nav details').forEach(d => {
+            if (d !== detailsEl) d.removeAttribute('open');
+        });
+        if (detailsEl) detailsEl.setAttribute('open', '');
+    }
+
+    if (window.innerWidth <= 900) closeSidebar();
+    applyFilters();
+  };
+
+  function formatPrice(p) { return p ? '$' + p.toFixed(2) : ''; }
+  function escapeHtml(str) { return String(str).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+
+  function applyFilters() {
+    const q = searchInput.value.trim().toLowerCase();
+    const minPct = Number(minDiscount.value);
+    const hideNoDisc = hideNoDiscount.checked;
+    
+    minVal.textContent = minPct + '%';
+    if (q) resultsHeading.innerHTML = `Search: "${q}"`;
+    else resultsHeading.innerHTML = activeCategoryName;
+
+    filteredData = DEALS.filter(d => {
+      const pct = d.discount_pct || 0;
+      if (hideNoDisc && pct <= 0) return false;
+      if (pct < minPct) return false;
+      
+      const title = d.title.toLowerCase();
+      if (q && !title.includes(q)) return false;
+      if (!q && activeCategoryKeywords.length > 0) {
+        if (!activeCategoryKeywords.some(kw => title.includes(kw))) return false;
+      }
+      return true;
+    });
+
+    const sortMode = sortSelect.value;
+    filteredData.sort((a, b) => {
+      if (sortMode === 'discount_desc') return (b.discount_pct || 0) - (a.discount_pct || 0);
+      if (sortMode === 'price_asc') return (a.sale_price ?? Infinity) - (b.sale_price ?? Infinity);
+      if (sortMode === 'price_desc') return (b.sale_price ?? -Infinity) - (a.sale_price ?? -Infinity);
+      if (sortMode === 'title_asc') return a.title.localeCompare(b.title);
+      return 0;
+    });
+
+    currentPage = 1;
+    renderGrid();
+  }
+
+  function renderGrid() {
+    resultCount.textContent = `${filteredData.length} items`;
+    grid.innerHTML = '';
+    
+    if (filteredData.length === 0) {
+      emptyState.style.display = 'block';
+      paginationTop.innerHTML = '';
+      paginationBottom.innerHTML = '';
+      return;
+    }
+    emptyState.style.display = 'none';
+
+    const startIndex = (currentPage - 1) * itemsPerPage;
+    const paginatedItems = filteredData.slice(startIndex, startIndex + itemsPerPage);
+    const frag = document.createDocumentFragment();
+
+    paginatedItems.forEach(d => {
+      const card = document.createElement('div');
+      card.className = 'card';
+
+      let badges = '';
+      let promoText = d.promo || "";
+      const promoLower = promoText.toLowerCase();
+      
+      if (promoLower.includes("half price") || promoLower.startsWith("save ") || promoLower.startsWith("save\\n")) {
+          promoText = "";
+      }
+
+      if (d.discount_pct || promoText) {
+        badges += `<div class="card-badges">`;
+        if (promoText) badges += `<span class="badge-promo"><i class="fa-solid fa-star"></i> ${escapeHtml(promoText)}</span>`;
+        if (d.discount_pct) badges += `<span class="badge-discount"><i class="fa-solid fa-tag"></i> ${d.discount_pct}% OFF</span>`;
+        badges += `</div>`;
+      }
+      
+      const iconClass = getIconForTitle(d.title);
+
+      card.innerHTML = `
+        <div class="card-top">
+          <div class="card-icon-wrapper">
+            <i class="fa-solid ${iconClass}"></i>
+          </div>
+          ${badges}
+        </div>
+        <h3>${escapeHtml(d.title)}</h3>
+        <div class="price-box">
+          <span class="price-sale">${formatPrice(d.sale_price)}</span>
+          ${d.old_price ? `<span class="price-old">${formatPrice(d.old_price)}</span>` : ''}
+        </div>
+        <a class="btn-view" href="${escapeHtml(d.link)}" target="_blank">
+          <i class="fa-solid fa-cart-shopping"></i> VIEW DEAL
+        </a>
+      `;
+      frag.appendChild(card);
+      observer.observe(card);
+    });
+    
+    grid.appendChild(frag);
+    renderPagination();
+  }
+
+  function generatePaginationButtons(totalPages) {
+    let html = '';
+    
+    const prevDisabled = currentPage === 1 ? 'disabled' : '';
+    html += `<button class="page-btn" ${prevDisabled} onclick="changePage(${currentPage - 1})"><i class="fa-solid fa-chevron-left"></i></button>`;
+
+    let startPage = Math.max(1, currentPage - 2);
+    let endPage = Math.min(totalPages, startPage + 3);
+    if (endPage - startPage < 3) startPage = Math.max(1, endPage - 3);
+
+    for (let i = startPage; i <= endPage; i++) {
+      const activeClass = i === currentPage ? 'active' : '';
+      html += `<button class="page-btn ${activeClass}" onclick="changePage(${i})">${i}</button>`;
+    }
+
+    const nextDisabled = currentPage === totalPages ? 'disabled' : '';
+    html += `<button class="page-btn" ${nextDisabled} onclick="changePage(${currentPage + 1})"><i class="fa-solid fa-chevron-right"></i></button>`;
+    
+    return html;
+  }
+
+  function renderPagination() {
+    const totalPages = Math.ceil(filteredData.length / itemsPerPage);
+    if (totalPages <= 1) {
+        paginationTop.innerHTML = '';
+        paginationBottom.innerHTML = '';
+        return;
+    }
+    const html = generatePaginationButtons(totalPages);
+    paginationTop.innerHTML = html;
+    paginationBottom.innerHTML = html;
+  }
+
+  window.changePage = function(page) {
+      currentPage = page;
+      renderGrid();
+      window.scrollTo({top: 0, behavior: 'smooth'});
+  };
+
+  searchInput.addEventListener('input', () => { 
+    if(activeCategoryKeywords.length > 0) {
+       activeCategoryKeywords = [];
+       activeCategoryName = "Search Results";
+       document.querySelectorAll('.category-nav li, .category-nav summary').forEach(el => el.classList.remove('active'));
+    }
+    applyFilters(); 
+  });
+  sortSelect.addEventListener('change', applyFilters);
+  minDiscount.addEventListener('input', applyFilters);
+  hideNoDiscount.addEventListener('change', applyFilters);
+
+  initCategories();
+  applyFilters();
+</script>
+
+</body>
+</html>
+"""
+
+def main():
+    rows = load_rows()
+    deals_json = json.dumps(rows)
+    
+    timestamp = datetime.now().strftime("Latest catalogue scraped at %I:%M %p, %b %d")
+    
+    html = HTML_TEMPLATE.replace("__DEALS_JSON__", deals_json).replace("__TIMESTAMP__", timestamp)
+
+    with open(OUTPUT_HTML, "w", encoding="utf-8") as f:
+        f.write(html)
+
+    print(f"Done. {len(rows)} deals written to {OUTPUT_HTML}")
+    print("Open that file directly in a browser to view it.")
+
+if __name__ == "__main__":
+    main()
