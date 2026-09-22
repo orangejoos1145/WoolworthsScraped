@@ -22,7 +22,7 @@ jobs:
         run: pip install requests
 
       - name: Run API Scraper
-        run: python Site_Scraper.py
+        run: python Upgraded_Scraper.py
 
       - name: Generate HTML site
         run: python Site_Generator.py
