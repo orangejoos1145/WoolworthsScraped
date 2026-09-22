@@ -1,5 +1,5 @@
 ```yaml
-- name: Connect to PureVPN New Zealand
+name: Connect to PureVPN New Zealand
   env:
     PUREVPN_USER: ${{ secrets.PUREVPN_USER }}
     PUREVPN_PASS: ${{ secrets.PUREVPN_PASS }}
