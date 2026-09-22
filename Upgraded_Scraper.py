@@ -2,7 +2,7 @@
 Woolworths API Deals Scraper - The "All Specials" Edition
 ---------------------------------------------------------
 Uses the backend's native 'SPECIALS' filter to capture every single 
-discounted item. Includes Webshare static proxy integration to bypass anti-bot blocks.
+discounted item. Includes a Webshare proxy rotation loop to bypass blocks.
 """
 
 import csv
@@ -15,8 +15,8 @@ urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 # --- CONFIGURATION ---
 OUTPUT_CSV = "woolworths_deals.csv"
-PAGE_SIZE = 400  # Max batch size permitted by the server
-MAX_PAGES = 20   # 20 pages * 400 items = 8,000 max capacity
+PAGE_SIZE = 400  
+MAX_PAGES = 20   
 ONLY_DISCOUNTED = True
 
 GRAPHQL_URL = "https://www.woolworths.co.nz/api/graphql?op-name=ProductSearch"
@@ -81,7 +81,6 @@ def fetch_page(page_index):
         "query": QUERY
     }
 
-    # Your 10 dedicated Webshare proxies
     proxy_list = [
         "http://ouswikyu:4luytcyxhn0o@31.59.20.176:6754",
         "http://ouswikyu:4luytcyxhn0o@45.38.107.97:6014",
@@ -95,42 +94,45 @@ def fetch_page(page_index):
         "http://ouswikyu:4luytcyxhn0o@31.58.9.4:6077"
     ]
 
-    # Randomly select a proxy for this specific request
-    proxy_url = random.choice(proxy_list)
-    proxies = {
-        "http": proxy_url,
-        "https": proxy_url
-    }
+    # Shuffle the list so it tries them in a random order
+    random.shuffle(proxy_list)
 
-    print(f"Requesting page {page_index} (batch of {PAGE_SIZE}) using proxy {proxy_url.split('@')[1]}...")
-    
-    try:
-        response = requests.post(
-            GRAPHQL_URL, 
-            headers=HEADERS, 
-            json=payload, 
-            proxies=proxies, 
-            verify=False, 
-            timeout=30
-        )
+    # Retry loop: try up to 10 proxies before giving up on this page
+    for attempt, proxy_url in enumerate(proxy_list, start=1):
+        proxies = {
+            "http": proxy_url,
+            "https": proxy_url
+        }
+
+        ip_port = proxy_url.split('@')[1]
+        print(f"Requesting page {page_index} (Attempt {attempt}/10) using proxy {ip_port}...")
         
-        if response.status_code != 200:
-            print(f"Server rejected the request (Status {response.status_code}).")
-            return None
-
-        data = response.json()
-        if "errors" in data:
-            print("GraphQL Error:", data["errors"])
-            return None
+        try:
+            response = requests.post(
+                GRAPHQL_URL, 
+                headers=HEADERS, 
+                json=payload, 
+                proxies=proxies, 
+                verify=False, 
+                timeout=15
+            )
             
-        return data.get("data", {}).get("My", {}).get("products", {})
+            if response.status_code == 200:
+                data = response.json()
+                if "errors" in data:
+                    print("GraphQL Error:", data["errors"])
+                    return None
+                return data.get("data", {}).get("My", {}).get("products", {})
+            else:
+                print(f" -> Failed with Status {response.status_code}. Trying next proxy...")
 
-    except requests.exceptions.Timeout:
-        print("Error: Webshare proxy connection timed out.")
-        return None
-    except requests.exceptions.RequestException as e:
-        print(f"Connection error: {e}")
-        return None
+        except requests.exceptions.Timeout:
+            print(" -> Proxy timed out. Trying next proxy...")
+        except requests.exceptions.RequestException as e:
+            print(" -> Connection error. Trying next proxy...")
+
+    print("All 10 proxies failed for this page.")
+    return None
 
 def main():
     all_deals = []
