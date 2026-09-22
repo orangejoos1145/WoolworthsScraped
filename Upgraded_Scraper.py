@@ -2,17 +2,20 @@
 Woolworths API Deals Scraper - The "All Specials" Edition
 ---------------------------------------------------------
 Uses the backend's native 'SPECIALS' filter to capture every single 
-discounted item in the supermarket, completely bypassing the 1,000-item 
-keyword search limit. Includes anti-hang protection for GitHub Actions.
+discounted item. Includes Webshare proxy integration to bypass anti-bot blocks.
 """
 
 import csv
 import requests
+import urllib3
+
+# Suppress SSL warnings in GitHub Actions logs
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 # --- CONFIGURATION ---
 OUTPUT_CSV = "woolworths_deals.csv"
 PAGE_SIZE = 400  # Max batch size permitted by the server
-MAX_PAGES = 20   # 20 pages * 400 items = 8,000 max capacity (covers the whole store)
+MAX_PAGES = 20   # 20 pages * 400 items = 8,000 max capacity
 ONLY_DISCOUNTED = True
 
 GRAPHQL_URL = "https://www.woolworths.co.nz/api/graphql?op-name=ProductSearch"
@@ -67,21 +70,34 @@ def fetch_page(page_index):
                 "byKeyword": {
                     "pageIndex": page_index,
                     "pageSize": PAGE_SIZE,
-                    "value": "",                 # Empty string so it doesn't limit to a keyword
+                    "value": "",
                     "sortBy": "RELEVANCE",
                     "facetFilters": [],
-                    "staticFilters": ["SPECIALS"] # This grabs ALL deals store-wide
+                    "staticFilters": ["SPECIALS"] 
                 }
             }
         },
         "query": QUERY
     }
 
+    # Webshare Proxy Configuration using provided credentials
+    proxy_url = "http://ouswikyu:4luytcyxhn0o@p.webshare.io:80"
+    proxies = {
+        "http": proxy_url,
+        "https": proxy_url
+    }
+
     print(f"Requesting page {page_index} (batch of {PAGE_SIZE})...")
     
     try:
-        # Added strict 15-second timeout to prevent indefinite hanging in GitHub Actions
-        response = requests.post(GRAPHQL_URL, headers=HEADERS, json=payload, timeout=15)
+        response = requests.post(
+            GRAPHQL_URL, 
+            headers=HEADERS, 
+            json=payload, 
+            proxies=proxies, 
+            verify=False, 
+            timeout=30
+        )
         
         if response.status_code != 200:
             print(f"Server rejected the request (Status {response.status_code}).")
@@ -95,7 +111,7 @@ def fetch_page(page_index):
         return data.get("data", {}).get("My", {}).get("products", {})
 
     except requests.exceptions.Timeout:
-        print("Error: Woolworths server timed out (anti-bot protection triggered on this request).")
+        print("Error: Webshare proxy connection timed out.")
         return None
     except requests.exceptions.RequestException as e:
         print(f"Connection error: {e}")
@@ -105,7 +121,6 @@ def main():
     all_deals = []
     seen_skus = set()
     
-    # 0-indexed pagination to ensure the first 400 items aren't skipped
     for page in range(0, MAX_PAGES):
         product_data = fetch_page(page)
         if not product_data:
@@ -140,7 +155,6 @@ def main():
             sale_price = price_info.get("sellingPrice")
             old_price = price_info.get("wasPrice")
             
-            # Extract Promo Tags Safely
             promo_note = ""
             tags = item.get("tags")
             
@@ -163,7 +177,6 @@ def main():
                             if isinstance(roundel, dict) and roundel.get("alt"):
                                 promo_note = roundel.get("alt").strip()
             
-            # Discount Math verification
             is_discounted = bool(old_price and sale_price and old_price > sale_price)
             if ONLY_DISCOUNTED and not is_discounted and not promo_note:
                 continue
@@ -187,13 +200,11 @@ def main():
 
         print(f" -> Processed {len(results)} items. Kept {len(all_deals)} unique deals total.")
         
-        # Stop automatically if we reach the last page indicated by the server
         total_pages = product_data.get("totalPages", 1)
         if page + 1 >= total_pages:
             print("Reached the final page of specials.")
             break
 
-    # Write to CSV
     with open(OUTPUT_CSV, "w", newline="", encoding="utf-8") as f:
         writer = csv.DictWriter(
             f, fieldnames=["Title", "Old Price", "Discounted Price", "Discount %", "Link", "Promo Note"]
