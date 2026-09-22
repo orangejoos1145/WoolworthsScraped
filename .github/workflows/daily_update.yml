@@ -35,9 +35,16 @@ jobs:
           echo "1rmBBVO0e9GOFQ" >> auth.txt
           chmod 600 auth.txt
           
-          # Start OpenVPN in the background using the New Zealand UDP profile
-          cd New+OVPN+Files/UDP/
-          sudo openvpn --config "NewZealand udp.ovpn" --auth-user-pass ../../auth.txt --daemon
+          # Go to the newly extracted OpenVPN folder
+          cd Recommended-CA2/OpenVPN/
+          
+          # Automatically find the New Zealand UDP config file
+          NZ_CONFIG=$(ls *nz*-udp*.ovpn | head -n 1)
+          if [ -z "$NZ_CONFIG" ]; then NZ_CONFIG=$(ls *nz*.ovpn | head -n 1); fi
+          echo "Found NZ config: $NZ_CONFIG"
+          
+          # Start OpenVPN in the background
+          sudo openvpn --config "$NZ_CONFIG" --auth-user-pass ../../auth.txt --daemon
           
           echo "Waiting 15 seconds for the VPN tunnel to establish..."
           sleep 15
