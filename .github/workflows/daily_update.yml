@@ -1,41 +1,61 @@
-def fetch_page(page_index):
-    payload = {
-        "operationName": "ProductSearch",
-        "variables": {
-            "searchInput": {
-                "byKeyword": {
-                    "pageIndex": page_index,
-                    "pageSize": PAGE_SIZE,
-                    "value": "",
-                    "sortBy": "RELEVANCE",
-                    "facetFilters": [],
-                    "staticFilters": ["SPECIALS"] 
-                }
-            }
-        },
-        "query": QUERY
-    }
+name: Daily Woolies Scrape
 
-    print(f"Requesting page {page_index} (batch of {PAGE_SIZE})...")
-    
-    try:
-        # Standard request running through the PureVPN OpenVPN tunnel
-        response = requests.post(GRAPHQL_URL, headers=HEADERS, json=payload, timeout=15)
-        
-        if response.status_code != 200:
-            print(f"Server rejected the request (Status {response.status_code}).")
-            return None
+on:
+  schedule:
+    - cron: '0 21 * * *'
+  workflow_dispatch:
 
-        data = response.json()
-        if "errors" in data:
-            print("GraphQL Error:", data["errors"])
-            return None
-            
-        return data.get("data", {}).get("My", {}).get("products", {})
+jobs:
+  update-deals:
+    runs-on: ubuntu-latest
 
-    except requests.exceptions.Timeout:
-        print("Error: Server connection timed out.")
-        return None
-    except requests.exceptions.RequestException as e:
-        print(f"Connection error: {e}")
-        return None
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: pip install requests urllib3
+
+      - name: Connect to PureVPN New Zealand
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y openvpn unzip
+          
+          # Download official PureVPN configuration files and CA certificates
+          wget https://d11a57lttb2ffq.cloudfront.net/heartbleed/router/Recommended-CA2.zip
+          unzip Recommended-CA2.zip
+          
+          # Create authentication file with your credentials
+          echo "purevpn0s12923268" > auth.txt
+          echo "1rmBBVO0e9GOFQ" >> auth.txt
+          chmod 600 auth.txt
+          
+          # Start OpenVPN in the background using the New Zealand UDP profile
+          cd New+OVPN+Files/UDP/
+          sudo openvpn --config "NewZealand udp.ovpn" --auth-user-pass ../../auth.txt --daemon
+          
+          echo "Waiting 15 seconds for the VPN tunnel to establish..."
+          sleep 15
+          
+          # Verify the IP changed (will print in the GitHub Actions log)
+          curl ifconfig.me
+          echo ""
+
+      - name: Run API Scraper
+        run: python Upgraded_Scraper.py
+
+      - name: Generate HTML site
+        run: python Site_Generator.py
+
+      - name: Commit and push changes
+        run: |
+          git config --local user.name "github-actions[bot]"
+          git config --local user.email "github-actions[bot]@users.noreply.github.com"
+          git add woolworths_deals.csv index.html
+          git commit -m "Automated daily deals update via PureVPN" || echo "No changes to commit"
+          git push
