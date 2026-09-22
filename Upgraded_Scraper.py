@@ -3,7 +3,7 @@ Woolworths API Deals Scraper - The "All Specials" Edition
 ---------------------------------------------------------
 Uses the backend's native 'SPECIALS' filter to capture every single 
 discounted item in the supermarket, completely bypassing the 1,000-item 
-keyword search limit.
+keyword search limit. Includes anti-hang protection for GitHub Actions.
 """
 
 import csv
@@ -78,18 +78,28 @@ def fetch_page(page_index):
     }
 
     print(f"Requesting page {page_index} (batch of {PAGE_SIZE})...")
-    response = requests.post(GRAPHQL_URL, headers=HEADERS, json=payload)
     
-    if response.status_code != 200:
-        print(f"Server rejected the request (Status {response.status_code}).")
-        return None
-
-    data = response.json()
-    if "errors" in data:
-        print("GraphQL Error:", data["errors"])
-        return None
+    try:
+        # Added strict 15-second timeout to prevent indefinite hanging in GitHub Actions
+        response = requests.post(GRAPHQL_URL, headers=HEADERS, json=payload, timeout=15)
         
-    return data.get("data", {}).get("My", {}).get("products", {})
+        if response.status_code != 200:
+            print(f"Server rejected the request (Status {response.status_code}).")
+            return None
+
+        data = response.json()
+        if "errors" in data:
+            print("GraphQL Error:", data["errors"])
+            return None
+            
+        return data.get("data", {}).get("My", {}).get("products", {})
+
+    except requests.exceptions.Timeout:
+        print("Error: Woolworths server timed out (anti-bot protection triggered on this request).")
+        return None
+    except requests.exceptions.RequestException as e:
+        print(f"Connection error: {e}")
+        return None
 
 def main():
     all_deals = []
