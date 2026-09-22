@@ -2,7 +2,8 @@
 Woolworths API Deals Scraper - The "All Specials" Edition
 ---------------------------------------------------------
 Uses the backend's native 'SPECIALS' filter to capture every single 
-discounted item. Includes a Webshare proxy rotation loop to bypass blocks.
+discounted item. Automatically fetches live Webshare proxies via API 
+and rotates through them to bypass blocks.
 """
 
 import csv
@@ -81,23 +82,29 @@ def fetch_page(page_index):
         "query": QUERY
     }
 
-    proxy_list = [
-        "http://ouswikyu:4luytcyxhn0o@31.59.20.176:6754",
-        "http://ouswikyu:4luytcyxhn0o@45.38.107.97:6014",
-        "http://ouswikyu:4luytcyxhn0o@198.105.121.200:6462",
-        "http://ouswikyu:4luytcyxhn0o@64.137.96.74:6641",
-        "http://ouswikyu:4luytcyxhn0o@198.23.243.226:6361",
-        "http://ouswikyu:4luytcyxhn0o@38.154.185.97:6370",
-        "http://ouswikyu:4luytcyxhn0o@84.247.60.125:6095",
-        "http://ouswikyu:4luytcyxhn0o@142.111.67.146:5611",
-        "http://ouswikyu:4luytcyxhn0o@191.96.254.138:6185",
-        "http://ouswikyu:4luytcyxhn0o@31.58.9.4:6077"
-    ]
+    # Fetch live proxies automatically using your Webshare API Token
+    api_token = "o1bcyv81lheoev6cpdszzk8bn7a0cioeho2xpso5"
+    api_url = "https://proxy.webshare.io/api/v2/proxy/list/?mode=direct&page=1&page_size=20"
+    
+    proxy_list = []
+    try:
+        ws_response = requests.get(api_url, headers={"Authorization": f"Token {api_token}"}, timeout=10)
+        if ws_response.status_code == 200:
+            for p in ws_response.json().get("results", []):
+                if p.get("valid"):
+                    proxy_list.append(f"http://{p['username']}:{p['password']}@{p['proxy_address']}:{p['port']}")
+    except Exception as e:
+        print(f"Could not fetch proxies from Webshare API: {e}")
+
+    # Fallback just in case the API fails
+    if not proxy_list:
+        print("Error: Proxy list is empty. Check your Webshare API token.")
+        return None
 
     # Shuffle the list so it tries them in a random order
     random.shuffle(proxy_list)
 
-    # Retry loop: try up to 10 proxies before giving up on this page
+    # Retry loop: try all fetched proxies before giving up on this page
     for attempt, proxy_url in enumerate(proxy_list, start=1):
         proxies = {
             "http": proxy_url,
@@ -105,7 +112,7 @@ def fetch_page(page_index):
         }
 
         ip_port = proxy_url.split('@')[1]
-        print(f"Requesting page {page_index} (Attempt {attempt}/10) using proxy {ip_port}...")
+        print(f"Requesting page {page_index} (Attempt {attempt}/{len(proxy_list)}) using proxy {ip_port}...")
         
         try:
             response = requests.post(
@@ -131,7 +138,7 @@ def fetch_page(page_index):
         except requests.exceptions.RequestException as e:
             print(" -> Connection error. Trying next proxy...")
 
-    print("All 10 proxies failed for this page.")
+    print("All proxies failed for this page.")
     return None
 
 def main():
