@@ -1,68 +1,125 @@
-name: Daily Woolies Scrape
+```yaml
+- name: Connect to PureVPN New Zealand
+  env:
+    PUREVPN_USER: ${{ secrets.PUREVPN_USER }}
+    PUREVPN_PASS: ${{ secrets.PUREVPN_PASS }}
+  run: |
+    set -euo pipefail
 
-on:
-  schedule:
-    - cron: '0 21 * * *'
-  workflow_dispatch:
+    echo "=== Installing OpenVPN ==="
+    sudo apt-get update
+    sudo apt-get install -y openvpn unzip curl
 
-jobs:
-  update-deals:
-    runs-on: ubuntu-latest
+    echo "=== Downloading PureVPN certificates/config bundle ==="
+    wget -q https://d11a57lttb2ffq.cloudfront.net/heartbleed/router/Recommended-CA2.zip
+    unzip -o Recommended-CA2.zip
 
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
+    echo "=== Checking PureVPN certificate files ==="
+    test -f Recommended-CA2/Certificates/ca.crt
+    test -f Recommended-CA2/Certificates/client.crt
+    test -f Recommended-CA2/Certificates/client.key
 
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.11'
+    echo "=== Creating authentication file ==="
+    printf '%s\n%s\n' "$PUREVPN_USER" "$PUREVPN_PASS" > auth.txt
+    chmod 600 auth.txt
 
-      - name: Install dependencies
-        run: pip install requests urllib3
+    echo "=== Creating New Zealand OpenVPN configuration ==="
 
-      - name: Connect to PureVPN New Zealand
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y openvpn unzip
-          
-          # Download official PureVPN configuration files and CA certificates
-          wget https://d11a57lttb2ffq.cloudfront.net/heartbleed/router/Recommended-CA2.zip
-          unzip Recommended-CA2.zip
-          
-          # Create authentication file with your credentials
-          echo "purevpn0s12923268" > auth.txt
-          echo "1rmBBVO0e9GOFQ" >> auth.txt
-          chmod 600 auth.txt
-          
-          # Go to the newly extracted OpenVPN folder
-          cd Recommended-CA2/OpenVPN/
-          
-          # Automatically find the New Zealand UDP config file
-          NZ_CONFIG=$(ls *nz*-udp*.ovpn | head -n 1)
-          if [ -z "$NZ_CONFIG" ]; then NZ_CONFIG=$(ls *nz*.ovpn | head -n 1); fi
-          echo "Found NZ config: $NZ_CONFIG"
-          
-          # Start OpenVPN in the background
-          sudo openvpn --config "$NZ_CONFIG" --auth-user-pass ../../auth.txt --daemon
-          
-          echo "Waiting 15 seconds for the VPN tunnel to establish..."
-          sleep 15
-          
-          # Verify the IP changed (will print in the GitHub Actions log)
-          curl ifconfig.me
-          echo ""
+    cat > nz2-auto-udp.ovpn <<'EOF'
+    client
+    dev tun
+    proto udp
 
-      - name: Run API Scraper
-        run: python Upgraded_Scraper.py
+    remote nz2-auto-udp-obf.ptoserver.com 53
 
-      - name: Generate HTML site
-        run: python Site_Generator.py
+    resolv-retry infinite
+    nobind
+    persist-key
+    persist-tun
 
-      - name: Commit and push changes
-        run: |
-          git config --local user.name "github-actions[bot]"
-          git config --local user.email "github-actions[bot]@users.noreply.github.com"
-          git add woolworths_deals.csv index.html
-          git commit -m "Automated daily deals update via PureVPN" || echo "No changes to commit"
-          git push
+    auth-user-pass auth.txt
+    auth-nocache
+
+    remote-cert-tls server
+
+    ca Recommended-CA2/Certificates/ca.crt
+    cert Recommended-CA2/Certificates/client.crt
+    key Recommended-CA2/Certificates/client.key
+
+    auth SHA256
+    cipher AES-256-CBC
+
+    verb 3
+
+    ping 10
+    ping-restart 60
+
+    explicit-exit-notify 2
+
+    redirect-gateway def1
+    EOF
+
+    chmod 600 nz2-auto-udp.ovpn
+
+    echo "=== Starting PureVPN New Zealand ==="
+
+    sudo openvpn \
+      --config "$PWD/nz2-auto-udp.ovpn" \
+      --auth-user-pass "$PWD/auth.txt" \
+      --daemon \
+      --log "$PWD/openvpn.log" \
+      --writepid "$PWD/openvpn.pid"
+
+    echo "=== Waiting for VPN tunnel ==="
+
+    VPN_CONNECTED=false
+
+    for i in {1..30}; do
+      sleep 2
+
+      if grep -q "Initialization Sequence Completed" openvpn.log 2>/dev/null; then
+        VPN_CONNECTED=true
+        break
+      fi
+
+      if grep -qE "AUTH_FAILED|TLS Error|Connection reset|Exiting due to fatal error" openvpn.log 2>/dev/null; then
+        echo "OpenVPN reported a connection failure:"
+        cat openvpn.log
+        exit 1
+      fi
+
+      echo "Waiting for VPN... ($i/30)"
+    done
+
+    if [ "$VPN_CONNECTED" != "true" ]; then
+      echo "VPN failed to establish within 60 seconds."
+      echo "===== OpenVPN LOG ====="
+      cat openvpn.log
+      echo "======================="
+      exit 1
+    fi
+
+    echo "=== PureVPN connected ==="
+
+    echo "OpenVPN tunnel:"
+    ip addr show tun0 || true
+
+    echo ""
+    echo "Public IP after VPN connection:"
+    curl -4 --fail --silent --show-error https://api.ipify.org
+    echo ""
+
+    echo ""
+    echo "IP information:"
+    curl -4 --fail --silent --show-error https://ipinfo.io/json || true
+
+    echo ""
+    echo "=== VPN connection verified ==="
+
+    # Keep the VPN process alive for the remainder of the job.
+    if ! sudo kill -0 "$(cat openvpn.pid)" 2>/dev/null; then
+      echo "OpenVPN process unexpectedly stopped."
+      cat openvpn.log
+      exit 1
+    fi
+```
