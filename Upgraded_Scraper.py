@@ -14,6 +14,10 @@ Runs two passes - SPECIALS and MEMBER_PRICE - so Everyday Rewards member
 prices are included too. The member price comes from the product's
 "MemberPrice" tag (decisionInputs.promotionalPrice, in cents); the regular
 sellingPrice is the non-member price.
+
+Also records each product's real Woolworths category path (Department >
+Aisle > Shelf, from categoryHierarchyNames) so the site can organise
+products exactly the way woolworths.co.nz does.
 """
 
 import csv
@@ -50,6 +54,7 @@ query ProductSearch($searchInput: CompositeSearchInput!) {
           productName
           slug
           brand
+          __CATEGORY_FIELDS__
           variants {
             variantPrice {
               sellingPrice
@@ -90,11 +95,13 @@ query ProductSearch($searchInput: CompositeSearchInput!) {
 """
 
 
+CATEGORY_FIELDS = "categoryHierarchyNames { lvl0 lvl1 lvl2 lvl3 }"
+USE_CATEGORIES = True   # switched off automatically if the API ever rejects the field
 LAST_ERROR = ""
 
 
 def fetch_page(page_index, facet_filters=None, quiet=False, static_filter="SPECIALS"):
-    global LAST_ERROR
+    global LAST_ERROR, USE_CATEGORIES
     payload = {
         "operationName": "ProductSearch",
         "variables": {
@@ -109,7 +116,7 @@ def fetch_page(page_index, facet_filters=None, quiet=False, static_filter="SPECI
                 }
             }
         },
-        "query": QUERY
+        "query": QUERY.replace("__CATEGORY_FIELDS__", CATEGORY_FIELDS if USE_CATEGORIES else "")
     }
 
     time.sleep(REQUEST_PAUSE_S)
@@ -121,6 +128,10 @@ def fetch_page(page_index, facet_filters=None, quiet=False, static_filter="SPECI
             print(f"  {LAST_ERROR}")
         return None
 
+    if response.status_code != 200 and USE_CATEGORIES and "categoryHierarchyNames" in response.text:
+        print("  (Woolworths rejected the category field - continuing without categories)")
+        USE_CATEGORIES = False
+        return fetch_page(page_index, facet_filters, quiet, static_filter)
     if response.status_code != 200:
         LAST_ERROR = f"Status {response.status_code}: {response.text[:400]}"
         if not quiet:
@@ -128,6 +139,11 @@ def fetch_page(page_index, facet_filters=None, quiet=False, static_filter="SPECI
         return None
 
     data = response.json()
+    if "errors" in data and USE_CATEGORIES and "categoryHierarchyNames" in json.dumps(data["errors"]):
+        # Category field not accepted - carry on without categories rather than fail.
+        print("  (Woolworths rejected the category field - continuing without categories)")
+        USE_CATEGORIES = False
+        return fetch_page(page_index, facet_filters, quiet, static_filter)
     if "errors" in data:
         LAST_ERROR = "GraphQL Error: " + json.dumps(data["errors"])[:400]
         if not quiet:
@@ -167,6 +183,28 @@ def _member_price(tags):
             if isinstance(cents, (int, float)) and cents > 0:
                 return round(cents / 100, 2)
     return None
+
+
+SKIP_CATEGORY_NAMES = {"all departments", "specials", "all", ""}
+
+
+def category_path(item):
+    """Woolworths category path as [Department, Aisle, Shelf], from
+    categoryHierarchyNames. Handles plain names, lists, and 'A > B > C' paths."""
+    names = item.get("categoryHierarchyNames")
+    if not isinstance(names, dict):
+        return []
+    levels = []
+    for key in ("lvl0", "lvl1", "lvl2", "lvl3"):
+        v = names.get(key)
+        if isinstance(v, list):
+            v = v[0] if v else None
+        if isinstance(v, str) and v.strip():
+            levels.append(v.strip())
+    # Some systems store each level as the full path ("Pantry > Oil"): use the deepest.
+    full = [lv for lv in levels if " > " in lv]
+    parts = max(full, key=lambda x: x.count(" > ")).split(" > ") if full else levels
+    return [p.strip() for p in parts if p.strip().lower() not in SKIP_CATEGORY_NAMES][:3]
 
 
 def parse_item(item):
@@ -220,8 +258,13 @@ def parse_item(item):
         # Always calculate manually to avoid Woolworths API errors
         discount_pct = round(((old_price - sale_price) / old_price) * 100, 1)
 
+    path = category_path(item) + ["", "", ""]
+
     return {
         "sku": sku,
+        "Department": path[0],
+        "Aisle": path[1],
+        "Shelf": path[2],
         "Title": title,
         "Old Price": old_price if old_price else "",
         "Discounted Price": sale_price,
@@ -379,13 +422,21 @@ def main():
     # Write to CSV
     with open(OUTPUT_CSV, "w", newline="", encoding="utf-8") as f:
         writer = csv.DictWriter(
-            f, fieldnames=["Title", "Old Price", "Discounted Price", "Discount %", "Link", "Promo Note", "Everyday Rewards"],
+            f, fieldnames=["Title", "Old Price", "Discounted Price", "Discount %", "Link", "Promo Note",
+                           "Everyday Rewards", "Department", "Aisle", "Shelf"],
             extrasaction="ignore",
         )
         writer.writeheader()
         writer.writerows(all_deals)
 
     rewards = sum(1 for d in all_deals if d["Everyday Rewards"] == "Yes")
+    with_dept = [d for d in all_deals if d["Department"]]
+    if with_dept:
+        ex = with_dept[0]
+        print(f"\nCategories: {len(with_dept)} of {len(all_deals)} deals have a department "
+              f"(e.g. {' > '.join(x for x in (ex['Department'], ex['Aisle'], ex['Shelf']) if x)}).")
+    else:
+        print("\nCategories: none found - the site will fall back to keyword categories.")
     mins = round((time.time() - started) / 60, 1)
     reported = ", ".join(f"{k}: {v}" for k, v in totals.items())
     print(f"\nDone in {mins} min! Saved {len(all_deals)} unique deals to {OUTPUT_CSV} "

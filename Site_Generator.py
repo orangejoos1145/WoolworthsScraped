@@ -46,6 +46,8 @@ def load_rows():
                 "link": row.get("Link", "").strip(),
                 "promo": row.get("Promo Note", "").strip(),
                 "rewards": (row.get("Everyday Rewards") or "").strip().lower() == "yes",
+                "dept": (row.get("Department") or "").strip(),
+                "aisle": (row.get("Aisle") or "").strip(),
             })
     return rows
 
@@ -175,6 +177,10 @@ HTML_TEMPLATE = """<!DOCTYPE html>
   .category-nav summary.active, .category-nav li.active { background: var(--accent-light); border: 1px solid var(--primary-glow); color: var(--primary); }
   .category-nav ul { list-style: none; padding: 0; margin: 0.3rem 0 0.3rem 1.2rem; border-left: 2px solid var(--input-border); }
   .category-nav li { padding: 0.5rem 0.9rem; font-size: 0.85rem; color: var(--text-muted); }
+  .category-nav .cat-name { flex: 1; min-width: 0; }
+  .category-nav .cat-count { font-size: 0.7rem; font-weight: 600; color: var(--text-muted); background: var(--input-bg); border: 1px solid var(--input-border); padding: 1px 7px; border-radius: 99px; flex-shrink: 0; }
+  .category-nav summary .arrow { margin-left: 0; }
+  .card-cat { font-size: 0.72rem; color: var(--text-muted); margin-top: -0.4rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 
   main { flex: 1; min-width: 0; display: flex; flex-direction: column; }
   .results-header { display: flex; justify-content: space-between; align-items: flex-end; margin-bottom: 0.5rem; padding-bottom: 0.8rem; border-bottom: 1px solid var(--card-border); flex-wrap: wrap; gap: 1rem; }
@@ -225,8 +231,8 @@ HTML_TEMPLATE = """<!DOCTYPE html>
     .mobile-menu-btn { display: block; }
     .timestamp-badge { display: none; }
     .container { margin: 1rem auto; padding: 0 1rem; }
-    .sidebar { position: fixed; top: 0; left: -100%; height: 100vh; z-index: 100; width: 85%; max-width: 300px; border-radius: 0; margin: 0; overflow-y: auto; padding: 2rem 1.5rem; }
-    .sidebar.open { transform: translateX(100%); }
+    .sidebar { position: fixed; top: 0; left: 0; height: 100vh; z-index: 100; width: 85%; max-width: 300px; border-radius: 0; margin: 0; overflow-y: auto; padding: 2rem 1.5rem; transform: translateX(-105%); }
+    .sidebar.open { transform: translateX(0); }
     .sidebar-close-btn { display: block !important; background: none; border: none; color: var(--text-main); font-size: 1.5rem; cursor: pointer; }
     .grid { grid-template-columns: 1fr; } 
   }
@@ -355,7 +361,8 @@ HTML_TEMPLATE = """<!DOCTYPE html>
 
   // Only load deals that DO NOT contain restricted words in their title
   const RAW_DEALS = __DEALS_JSON__;
-  const DEALS = RAW_DEALS.filter(d => !RESTRICTED_RE.test(d.title));
+  const RESTRICTED_DEPT_RE = /beer|wine|liquor|spirits|tobacco/i;
+  const DEALS = RAW_DEALS.filter(d => !RESTRICTED_RE.test(d.title) && !RESTRICTED_DEPT_RE.test(d.dept || ""));
 
   // Theme Toggle
   let isDark = true;
@@ -407,6 +414,11 @@ HTML_TEMPLATE = """<!DOCTYPE html>
   let itemsPerPage = parseInt(perPageSelect.value);
   let activeCategoryKeywords = [];
   let activeCategoryName = "All Deals";
+  // Real Woolworths categories (from the scraper). Falls back to keyword
+  // categories below if the CSV has no Department column.
+  const HAS_REAL_CATS = DEALS.some(d => d.dept);
+  let activeDept = null;
+  let activeAisle = null;
 
   perPageSelect.addEventListener('change', (e) => {
     itemsPerPage = parseInt(e.target.value);
@@ -563,7 +575,73 @@ HTML_TEMPLATE = """<!DOCTYPE html>
     return 'fa-basket-shopping';
   }
 
+  function deptIcon(name) {
+    const n = name.toLowerCase();
+    const rules = [['frozen','fa-snowflake'],['fruit','fa-apple-whole'],['veg','fa-carrot'],['meat','fa-drumstick-bite'],
+      ['seafood','fa-fish'],['fridge','fa-cheese'],['deli','fa-cheese'],['dairy','fa-cheese'],['egg','fa-egg'],['bakery','fa-bread-slice'],
+      ['pantry','fa-jar'],['snack','fa-cookie-bite'],['drink','fa-bottle-water'],['health','fa-pump-soap'],['beauty','fa-pump-soap'],
+      ['household','fa-broom'],['cleaning','fa-broom'],['baby','fa-baby-carriage'],['pet','fa-paw'],['kitchen','fa-kitchen-set']];
+    for (const [k, icon] of rules) if (n.includes(k)) return icon;
+    return 'fa-basket-shopping';
+  }
+
+  function initRealCategories() {
+    const tree = new Map();
+    DEALS.forEach(d => {
+      if (!d.dept) return;
+      if (!tree.has(d.dept)) tree.set(d.dept, { count: 0, aisles: new Map() });
+      const node = tree.get(d.dept);
+      node.count++;
+      if (d.aisle) node.aisles.set(d.aisle, (node.aisles.get(d.aisle) || 0) + 1);
+    });
+    let html = '';
+    [...tree.entries()].sort((a, b) => a[0].localeCompare(b[0])).forEach(([dept, node]) => {
+      const aisles = [...node.aisles.entries()].sort((a, b) => a[0].localeCompare(b[0]));
+      html += `<details>
+                 <summary data-dept="${escapeHtml(dept)}" class="${aisles.length ? '' : 'no-sub'}">
+                   <i class="fa-solid ${deptIcon(dept)} cat-icon"></i>
+                   <span class="cat-name">${escapeHtml(dept)}</span>
+                   <span class="cat-count">${node.count}</span>
+                   ${aisles.length ? '<i class="fa-solid fa-chevron-down arrow"></i>' : ''}
+                 </summary>`;
+      if (aisles.length) {
+        html += '<ul>' + aisles.map(([aisle, n]) =>
+          `<li data-dept="${escapeHtml(dept)}" data-aisle="${escapeHtml(aisle)}"><span class="cat-name">${escapeHtml(aisle)}</span><span class="cat-count">${n}</span></li>`
+        ).join('') + '</ul>';
+      }
+      html += '</details>';
+    });
+    categoryNav.innerHTML = html;
+  }
+
+  categoryNav.addEventListener('click', (event) => {
+    const el = event.target.closest('[data-dept]');
+    if (!el || !HAS_REAL_CATS) return;
+    event.preventDefault();
+    event.stopPropagation();
+    const dept = el.dataset.dept;
+    const aisle = el.dataset.aisle || null;
+    const detailsEl = el.closest('details');
+    const same = activeDept === dept && activeAisle === aisle;
+
+    document.querySelectorAll('.category-nav li, .category-nav summary').forEach(x => x.classList.remove('active'));
+    if (same) {
+      activeDept = null; activeAisle = null; activeCategoryName = "All Deals";
+      if (!aisle && detailsEl) detailsEl.removeAttribute('open');
+    } else {
+      activeDept = dept; activeAisle = aisle;
+      activeCategoryName = aisle ? `${dept} › ${aisle}` : dept;
+      el.classList.add('active');
+      searchInput.value = '';
+      document.querySelectorAll('.category-nav details').forEach(d => { if (d !== detailsEl) d.removeAttribute('open'); });
+      if (detailsEl) detailsEl.setAttribute('open', '');
+    }
+    if (window.innerWidth <= 900 && (aisle || same)) closeSidebar();
+    applyFilters();
+  });
+
   function initCategories() {
+    if (HAS_REAL_CATS) { initRealCategories(); return; }
     let html = '';
     categories.forEach((cat) => {
       const keys = cat.keys.join(',');
@@ -639,6 +717,10 @@ HTML_TEMPLATE = """<!DOCTYPE html>
       
       const title = d.title.toLowerCase();
       if (q && !title.includes(q)) return false;
+      if (!q && activeDept) {
+        if (d.dept !== activeDept) return false;
+        if (activeAisle && d.aisle !== activeAisle) return false;
+      }
       if (!q && activeCategoryKeywords.length > 0) {
         if (!activeCategoryKeywords.some(kw => title.includes(kw))) return false;
       }
@@ -706,6 +788,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
           ${badges}
         </div>
         <h3>${escapeHtml(d.title)}</h3>
+        ${d.aisle || d.dept ? `<div class="card-cat">${escapeHtml(d.aisle || d.dept)}</div>` : ''}
         <div class="price-box">
           <span class="price-sale">${formatPrice(d.sale_price)}</span>
           ${d.rewards ? `<span class="price-note">With Everyday Rewards card</span>` : ''}
@@ -763,8 +846,9 @@ HTML_TEMPLATE = """<!DOCTYPE html>
   };
 
   searchInput.addEventListener('input', () => { 
-    if(activeCategoryKeywords.length > 0) {
+    if(activeCategoryKeywords.length > 0 || activeDept) {
        activeCategoryKeywords = [];
+       activeDept = null; activeAisle = null;
        activeCategoryName = "Search Results";
        document.querySelectorAll('.category-nav li, .category-nav summary').forEach(el => el.classList.remove('active'));
     }
