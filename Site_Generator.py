@@ -45,6 +45,7 @@ def load_rows():
                 "discount_pct": discount_pct,
                 "link": row.get("Link", "").strip(),
                 "promo": row.get("Promo Note", "").strip(),
+                "rewards": (row.get("Everyday Rewards") or "").strip().lower() == "yes",
             })
     return rows
 
@@ -69,6 +70,10 @@ HTML_TEMPLATE = """<!DOCTYPE html>
     --text-main: #f8fafc;
     --text-muted: #94a3b8;
     --danger: #ef4444;
+    --rewards: #fb923c;
+    --rewards-bg: rgba(251, 146, 60, 0.14);
+    --rewards-border: rgba(251, 146, 60, 0.4);
+    --rewards-switch: #f97316;
     --danger-glow: rgba(239, 68, 68, 0.15);
     --accent-light: rgba(16, 185, 129, 0.1);
     --header-bg: rgba(12, 16, 23, 0.85);
@@ -89,6 +94,10 @@ HTML_TEMPLATE = """<!DOCTYPE html>
     --text-main: #0f172a;
     --text-muted: #64748b;
     --danger: #dc2626;
+    --rewards: #c2410c;
+    --rewards-bg: rgba(234, 88, 12, 0.1);
+    --rewards-border: rgba(234, 88, 12, 0.35);
+    --rewards-switch: #ea580c;
     --danger-glow: rgba(220, 38, 38, 0.1);
     --accent-light: #eaf7ec;
     --header-bg: rgba(255, 255, 255, 0.85);
@@ -185,6 +194,9 @@ HTML_TEMPLATE = """<!DOCTYPE html>
   .card-badges { display: flex; flex-direction: column; gap: 0.4rem; flex: 1; align-items: flex-start; }
   .badge-promo { background: var(--accent-light); color: var(--primary-dark); padding: 3px 8px; border-radius: 5px; font-size: 0.7rem; font-weight: 700; border: 1px solid var(--primary-glow); display: inline-flex; align-items: center; gap: 4px; }
   [data-theme="dark"] .badge-promo { color: var(--primary); }
+  .badge-rewards { background: var(--rewards-bg); color: var(--rewards); padding: 3px 8px; border-radius: 5px; font-size: 0.7rem; font-weight: 700; border: 1px solid var(--rewards-border); display: inline-flex; align-items: center; gap: 4px; }
+  .price-note { font-size: 0.7rem; font-weight: 600; color: var(--rewards); margin-top: 2px; }
+  #showRewards:checked + .slider { background-color: var(--rewards-switch); }
   .badge-discount { background: var(--danger-glow); color: var(--danger); padding: 3px 8px; border-radius: 5px; font-size: 0.7rem; font-weight: 700; border: 1px solid rgba(239, 68, 68, 0.3); display: inline-flex; align-items: center; gap: 4px; }
   .card h3 { font-size: 0.95rem; margin: 0; line-height: 1.3; color: var(--text-main); font-weight: 700; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
   .price-box { margin-top: auto; padding-top: 0.6rem; border-top: 1px dashed var(--input-border); display: flex; flex-direction: column; }
@@ -263,6 +275,16 @@ HTML_TEMPLATE = """<!DOCTYPE html>
       </div>
     </div>
 
+    <div class="filter-group toggle-group">
+      <div class="toggle-container">
+        <span>Everyday Rewards Prices</span>
+        <label class="switch">
+          <input type="checkbox" id="showRewards" checked>
+          <span class="slider"></span>
+        </label>
+      </div>
+    </div>
+
     <div class="filter-group">
       <label>Sort By</label>
       <select id="sortSelect">
@@ -327,18 +349,13 @@ HTML_TEMPLATE = """<!DOCTYPE html>
   // RESTRICTED CONTENT FILTER
   // Automatically drops items matching these keywords
   // ----------------------------------------------------
-  const RESTRICTED_WORDS = [
-      "wine", "beer", "vodka", "whiskey", "whisky", "rum", "gin", "cider", "bourbon", 
-      "liquor", "tequila", "cigarette", "tobacco", "vape", "smoking", 
-      "condom", "lubricant", "pregnancy", "period", "tampon", "pad"
-  ];
-  
+  // Whole-word matching, so "La Gina", "Extra Virgin", "Original", "Crumpets"
+  // and "Drumsticks" aren't caught by "gin"/"rum".
+  const RESTRICTED_RE = /\\b(wines?|beers?|vodka|whiske?y|rum|gin|ciders?|bourbon|liquor|tequila|cigarettes?|tobacco|vapes?|smoking|condoms?|lubricants?|pregnancy|period|tampons?|pads?)\\b/i;
+
   // Only load deals that DO NOT contain restricted words in their title
   const RAW_DEALS = __DEALS_JSON__;
-  const DEALS = RAW_DEALS.filter(d => {
-      const titleLower = d.title.toLowerCase();
-      return !RESTRICTED_WORDS.some(word => titleLower.includes(word));
-  });
+  const DEALS = RAW_DEALS.filter(d => !RESTRICTED_RE.test(d.title));
 
   // Theme Toggle
   let isDark = true;
@@ -615,6 +632,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
     else resultsHeading.innerHTML = activeCategoryName;
 
     filteredData = DEALS.filter(d => {
+      if (d.rewards && !showRewards.checked) return false;
       const pct = d.discount_pct || 0;
       if (hideNoDisc && pct <= 0) return false;
       if (pct < minPct) return false;
@@ -668,8 +686,11 @@ HTML_TEMPLATE = """<!DOCTYPE html>
           promoText = "";
       }
 
-      if (d.discount_pct || promoText) {
+      if (d.rewards && /rewards|club|member/i.test(promoText)) promoText = "";
+
+      if (d.discount_pct || promoText || d.rewards) {
         badges += `<div class="card-badges">`;
+        if (d.rewards) badges += `<span class="badge-rewards"><i class="fa-solid fa-id-card"></i> Everyday Rewards</span>`;
         if (promoText) badges += `<span class="badge-promo"><i class="fa-solid fa-star"></i> ${escapeHtml(promoText)}</span>`;
         if (d.discount_pct) badges += `<span class="badge-discount"><i class="fa-solid fa-tag"></i> ${d.discount_pct}% OFF</span>`;
         badges += `</div>`;
@@ -687,6 +708,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
         <h3>${escapeHtml(d.title)}</h3>
         <div class="price-box">
           <span class="price-sale">${formatPrice(d.sale_price)}</span>
+          ${d.rewards ? `<span class="price-note">With Everyday Rewards card</span>` : ''}
           ${d.old_price ? `<span class="price-old">${formatPrice(d.old_price)}</span>` : ''}
         </div>
         <a class="btn-view" href="${escapeHtml(d.link)}" target="_blank">
@@ -751,6 +773,8 @@ HTML_TEMPLATE = """<!DOCTYPE html>
   sortSelect.addEventListener('change', applyFilters);
   minDiscount.addEventListener('input', applyFilters);
   hideNoDiscount.addEventListener('change', applyFilters);
+  const showRewards = document.getElementById('showRewards');
+  showRewards.addEventListener('change', applyFilters);
 
   initCategories();
   applyFilters();
@@ -775,4 +799,4 @@ def main():
     print("Open that file directly in a browser to view it.")
 
 if __name__ == "__main__":
-    main()
+    main()
