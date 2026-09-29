@@ -112,6 +112,12 @@
   .filter-group label { display: block; font-size: 0.8rem; font-weight: 600; margin-bottom: 0.6rem; color: var(--text-muted); text-transform: uppercase; letter-spacing: 1px; }
   .then-by { margin-top: 0.8rem; padding-left: 0.8rem; border-left: 2px solid var(--primary-glow); animation: thenByIn 0.25s ease; }
   .then-by[hidden] { display: none; }
+  .then-by-hint { margin: 0.45rem 0 0; font-size: 0.72rem; line-height: 1.35; color: var(--text-muted); }
+  .band-header { grid-column: 1 / -1; display: flex; align-items: center; gap: 0.75rem; margin: 0.6rem 0 -0.2rem; }
+  .band-header:first-child { margin-top: 0; }
+  .band-header .band-label { font-size: 0.95rem; font-weight: 800; color: var(--text-main); white-space: nowrap; }
+  .band-header .band-count { font-size: 0.72rem; font-weight: 600; color: var(--text-muted); background: var(--input-bg); border: 1px solid var(--input-border); padding: 2px 9px; border-radius: 99px; white-space: nowrap; }
+  .band-header::after { content: ""; flex: 1; height: 1px; background: var(--card-border); }
   .then-by label i { font-size: 0.7rem; margin-right: 4px; color: var(--primary); }
   @keyframes thenByIn { from { opacity: 0; transform: translateY(-4px); } to { opacity: 1; transform: none; } }
   .filter-group select { width: 100%; padding: 0.7rem; border: 1px solid var(--input-border); border-radius: 8px; font-size: 0.9rem; background: var(--input-bg); color: var(--text-main); outline: none; }
@@ -221,7 +227,7 @@
 
   <div class="header-controls">
     <div class="timestamp-badge">
-      <i class="fa-solid fa-clock-rotate-left"></i> Latest catalogue scraped at 03:19 PM, Sep 29
+      <i class="fa-solid fa-clock-rotate-left"></i> Latest catalogue scraped at 03:22 PM, Sep 29
     </div>
     <button id="themeToggle" class="theme-toggle" aria-label="Toggle Dark/Light Mode">
       <i class="fa-solid fa-sun"></i>
@@ -269,6 +275,7 @@
       <div class="then-by" id="thenByWrap">
         <label for="thenBySelect"><i class="fa-solid fa-arrow-turn-up fa-rotate-90"></i> Then By</label>
         <select id="thenBySelect"></select>
+        <p class="then-by-hint" id="thenByHint"></p>
       </div>
     </div>
 
@@ -678,7 +685,10 @@
   function formatPrice(p) { return p ? '$' + p.toFixed(2) : ''; }
   function escapeHtml(str) { return String(str).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
 
-  // ---- Sorting: primary + "Then By" (only options that make sense) ----
+  // ---- Sorting: primary + "Then By" ----
+  // Price sorts: "Then By" works inside price ranges, so e.g. Highest Price >
+  // Biggest Discount shows the $50-$100 range first, best deals at the top.
+  // Discount sort: "Then By" breaks ties (lots of items sit at exactly 25% etc).
   const byNum = (v, missing) => (typeof v === 'number' && !isNaN(v)) ? v : missing;
   const SORTS = {
     discount_desc: { label: 'Biggest Discount (%)', cmp: (a, b) => byNum(b.discount_pct, 0) - byNum(a.discount_pct, 0) },
@@ -686,25 +696,65 @@
     price_desc:    { label: 'Highest Price',        cmp: (a, b) => byNum(b.sale_price, -Infinity) - byNum(a.sale_price, -Infinity) || 0 },
     title_asc:     { label: 'Name (A-Z)',           cmp: (a, b) => a.title.localeCompare(b.title) },
   };
-  // Name ties almost never happen, so it gets no second sort. A price sort
-  // doesn't offer the other price direction (it would do nothing).
   const THEN_BY = {
-    discount_desc: ['price_asc', 'price_desc', 'title_asc'],
-    price_asc:     ['discount_desc', 'title_asc'],
-    price_desc:    ['discount_desc', 'title_asc'],
+    discount_desc: [['price_asc', 'Lowest Price'], ['price_desc', 'Highest Price'], ['title_asc', 'Name (A-Z)']],
+    price_asc:     [['discount_desc', 'Biggest Discount (%)'], ['title_asc', 'Name (A-Z)'], ['none', 'Nothing (exact price order)']],
+    price_desc:    [['discount_desc', 'Biggest Discount (%)'], ['title_asc', 'Name (A-Z)'], ['none', 'Nothing (exact price order)']],
     title_asc:     [],
   };
   const THEN_BY_DEFAULT = { discount_desc: 'price_asc', price_asc: 'discount_desc', price_desc: 'discount_desc' };
+  const THEN_BY_HINT = {
+    discount_desc: 'Orders items that share the same discount.',
+    price_asc: 'Groups prices into ranges, then sorts inside each range.',
+    price_desc: 'Groups prices into ranges, then sorts inside each range.',
+  };
+
+  const PRICE_BANDS = [2, 5, 10, 20, 50, 100];
+  function priceBand(p) {
+    if (typeof p !== 'number' || isNaN(p)) return -1;
+    let i = 0;
+    while (i < PRICE_BANDS.length && p >= PRICE_BANDS[i]) i++;
+    return i;
+  }
+  function bandLabel(i) {
+    if (i < 0) return 'No price';
+    if (i === 0) return `Under $${PRICE_BANDS[0]}`;
+    if (i === PRICE_BANDS.length) return `$${PRICE_BANDS[i - 1]}+`;
+    return `$${PRICE_BANDS[i - 1]} – $${PRICE_BANDS[i]}`;
+  }
+  let groupByBand = false;   // true while a price sort is grouping into ranges
+
   const thenBySelect = document.getElementById('thenBySelect');
   const thenByWrap = document.getElementById('thenByWrap');
+  const thenByHint = document.getElementById('thenByHint');
 
   function updateThenBy(forceDefault) {
     const options = THEN_BY[sortSelect.value] || [];
     if (!options.length) { thenByWrap.hidden = true; thenBySelect.innerHTML = ''; return; }
-    const keep = !forceDefault && options.includes(thenBySelect.value) ? thenBySelect.value : THEN_BY_DEFAULT[sortSelect.value];
-    thenBySelect.innerHTML = options.map(o => `<option value="${o}">${SORTS[o].label}</option>`).join('');
+    const values = options.map(o => o[0]);
+    const keep = !forceDefault && values.includes(thenBySelect.value) ? thenBySelect.value : THEN_BY_DEFAULT[sortSelect.value];
+    thenBySelect.innerHTML = options.map(([v, label]) => `<option value="${v}">${label}</option>`).join('');
     thenBySelect.value = keep;
+    thenByHint.textContent = THEN_BY_HINT[sortSelect.value] || '';
     thenByWrap.hidden = false;
+  }
+
+  function sortData() {
+    const mode = sortSelect.value;
+    const then = thenBySelect.value;
+    const isPrice = mode === 'price_asc' || mode === 'price_desc';
+    const primary = SORTS[mode] || SORTS.discount_desc;
+    const secondary = SORTS[then] || null;
+    groupByBand = isPrice && !!secondary;
+
+    filteredData.sort((a, b) => {
+      if (groupByBand) {
+        const ba = priceBand(a.sale_price), bb = priceBand(b.sale_price);
+        if (ba !== bb) return mode === 'price_desc' ? bb - ba : ba - bb;
+        return secondary.cmp(a, b) || primary.cmp(a, b) || a.title.localeCompare(b.title);
+      }
+      return primary.cmp(a, b) || (secondary ? secondary.cmp(a, b) : 0) || a.title.localeCompare(b.title);
+    });
   }
 
   function applyFilters() {
@@ -734,10 +784,7 @@
       return true;
     });
 
-    const primary = SORTS[sortSelect.value] || SORTS.discount_desc;
-    const secondary = thenBySelect.value ? SORTS[thenBySelect.value] : null;
-    filteredData.sort((a, b) =>
-      primary.cmp(a, b) || (secondary ? secondary.cmp(a, b) : 0) || a.title.localeCompare(b.title));
+    sortData();
 
     currentPage = 1;
     renderGrid();
@@ -759,7 +806,21 @@
     const paginatedItems = filteredData.slice(startIndex, startIndex + itemsPerPage);
     const frag = document.createDocumentFragment();
 
+    const bandCounts = {};
+    if (groupByBand) filteredData.forEach(d => { const k = priceBand(d.sale_price); bandCounts[k] = (bandCounts[k] || 0) + 1; });
+    let lastBand = null;
+
     paginatedItems.forEach(d => {
+      if (groupByBand) {
+        const band = priceBand(d.sale_price);
+        if (band !== lastBand) {
+          const header = document.createElement('div');
+          header.className = 'band-header';
+          header.innerHTML = `<span class="band-label">${bandLabel(band)}</span><span class="band-count">${bandCounts[band]} deals</span>`;
+          frag.appendChild(header);
+          lastBand = band;
+        }
+      }
       const card = document.createElement('div');
       card.className = 'card';
 
