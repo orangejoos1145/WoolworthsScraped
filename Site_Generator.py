@@ -385,8 +385,15 @@ HTML_TEMPLATE = """<!DOCTYPE html>
 
   // Only load deals that DO NOT contain restricted words in their title
   const RAW_DEALS = __DEALS_JSON__;
-  const RESTRICTED_DEPT_RE = /beer|wine|liquor|spirits|tobacco/i;
-  const DEALS = RAW_DEALS.filter(d => !RESTRICTED_RE.test(d.title) && !RESTRICTED_DEPT_RE.test(d.dept || ""));
+  // Alcohol can sit outside the Beer & Wine department (e.g. Christmas >
+  // Festive Beer & Wine), so check the aisle as well as the department.
+  const RESTRICTED_DEPT_RE = /beer|wine|liquor|spirits|tobacco|champagne/i;
+  const RESTRICTED_EXTRA_RE = /\\b(champagne|prosecco|brandy|cognac|liqueurs?|shiraz|sauvignon|chardonnay|merlot|riesling|cabernet)\\b/i;
+  const DEALS = RAW_DEALS.filter(d =>
+      !RESTRICTED_RE.test(d.title) &&
+      !RESTRICTED_EXTRA_RE.test(d.title) &&
+      !RESTRICTED_DEPT_RE.test(d.dept || "") &&
+      !RESTRICTED_DEPT_RE.test(d.aisle || ""));
 
   // Theme Toggle
   let isDark = true;
