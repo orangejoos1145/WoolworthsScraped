@@ -231,20 +231,22 @@ HTML_TEMPLATE = """<!DOCTYPE html>
   .deal-types-head label { margin: 0 !important; }
   .dt-all { background: none; border: none; padding: 0; color: var(--primary); font-size: 0.72rem; font-weight: 700; cursor: pointer; }
   .dt-all[hidden] { display: none; }
-  .deal-types { display: flex; flex-direction: column; gap: 0.45rem; }
-  .deal-type { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; column-gap: 0.75rem; row-gap: 4px; padding: 9px 12px; transition: opacity 0.2s; }
-  .deal-type.empty { opacity: 0.5; }
-  .deal-type .dt-name { grid-column: 1; grid-row: 1; min-width: 0; display: flex; align-items: center; gap: 8px; line-height: 1.25; }
-  .dt-name i { width: 16px; text-align: center; color: var(--primary); flex-shrink: 0; }
-  .deal-type.rewards .dt-name i { color: var(--rewards); }
-  .deal-type .dt-label { min-width: 0; font-size: 0.85rem; }
-  .deal-type .dt-meta { grid-column: 1; grid-row: 2; display: flex; align-items: center; gap: 6px; padding-left: 24px; }
-  .deal-type .dt-count { font-size: 0.7rem; font-weight: 600; color: var(--text-muted); }
-  .deal-type .switch { grid-column: 2; grid-row: 1 / span 2; }
-  .dt-only { background: none; border: 1px solid var(--input-border); color: var(--text-muted); font-size: 0.66rem; font-weight: 700; padding: 1px 7px; border-radius: 6px; cursor: pointer; }
-  .dt-only:hover { color: var(--primary); border-color: var(--primary); }
-  .deal-type .switch { flex-shrink: 0; }
-  .deal-type.rewards input:checked + .slider { background-color: var(--rewards-switch); }
+  .deal-types { display: flex; flex-wrap: wrap; gap: 0.45rem; }
+  .flair { display: inline-flex; align-items: center; gap: 6px; padding: 6px 11px; border-radius: 99px; cursor: pointer;
+           font-size: 0.78rem; font-weight: 700; line-height: 1.2; color: var(--primary-dark); background: var(--accent-light);
+           border: 1px solid var(--primary-glow); transition: background 0.2s, color 0.2s, border-color 0.2s, opacity 0.2s; }
+  [data-theme="dark"] .flair { color: var(--primary); }
+  .flair i { font-size: 0.75rem; }
+  .flair .dt-count { font-size: 0.68rem; font-weight: 600; opacity: 0.8; }
+  .flair:hover { border-color: var(--primary); }
+  .flair.on { background: var(--primary); border-color: var(--primary); color: #fff; }
+  .flair.rewards { color: var(--rewards); background: var(--rewards-bg); border-color: var(--rewards-border); }
+  .flair.rewards:hover { border-color: var(--rewards); }
+  .flair.rewards.on { background: var(--rewards-switch); border-color: var(--rewards-switch); color: #fff; }
+  .flair.empty { opacity: 0.45; }
+  .dt-hint { margin: 0.5rem 0 0; font-size: 0.72rem; color: var(--text-muted); line-height: 1.35; }
+  .card-badges .flair-link { cursor: pointer; }
+  .card-badges .flair-link:hover { filter: brightness(1.15); text-decoration: underline; }
   .badge-discount { background: var(--danger-glow); color: var(--danger); padding: 3px 8px; border-radius: 5px; font-size: 0.7rem; font-weight: 700; border: 1px solid rgba(239, 68, 68, 0.3); display: inline-flex; align-items: center; gap: 4px; }
   .card h3 { font-size: 0.95rem; margin: 0; line-height: 1.3; color: var(--text-main); font-weight: 700; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
   .price-box { margin-top: auto; padding-top: 0.6rem; border-top: 1px dashed var(--input-border); display: flex; flex-direction: column; }
@@ -328,9 +330,10 @@ HTML_TEMPLATE = """<!DOCTYPE html>
     <div class="filter-group">
       <div class="deal-types-head">
         <label>Deal Types</label>
-        <button type="button" class="dt-all" id="dtAll" hidden>Show all</button>
+        <button type="button" class="dt-all" id="dtAll" hidden>Clear</button>
       </div>
       <div class="deal-types" id="dealTypes"><!-- built from the data --></div>
+      <p class="dt-hint" id="dtHint">Tap a flair to show only those deals. Tap more to combine.</p>
     </div>
 
     <div class="filter-group">
@@ -501,7 +504,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
       .sort((a, b) => rank(a[0]) - rank(b[0]) || b[1] - a[1] || a[0].localeCompare(b[0]))
       .map(([t]) => t);
   })();
-  const typeOn = new Map(DEAL_TYPES.map(t => [t, true]));
+  const picked = new Set();        // empty = all deal types
   const dealTypesEl = document.getElementById('dealTypes');
   const dtAllBtn = document.getElementById('dtAll');
   let currentPage = 1;
@@ -793,36 +796,37 @@ HTML_TEMPLATE = """<!DOCTYPE html>
 
   function buildDealTypes() {
     dealTypesEl.innerHTML = DEAL_TYPES.map(t => `
-      <div class="toggle-container deal-type${t === REWARDS_TYPE ? ' rewards' : ''}" data-type="${escapeHtml(t)}">
-        <span class="dt-name"><i class="fa-solid ${dealTypeIcon(t)}"></i><span class="dt-label">${escapeHtml(t)}</span></span>
-        <span class="dt-meta"><span class="dt-count">0</span><button type="button" class="dt-only" title="Show only ${escapeHtml(t)}">Only</button></span>
-        <label class="switch"><input type="checkbox" checked aria-label="${escapeHtml(t)}"><span class="slider"></span></label>
-      </div>`).join('');
+      <button type="button" class="flair${t === REWARDS_TYPE ? ' rewards' : ''}" data-type="${escapeHtml(t)}" aria-pressed="false">
+        <i class="fa-solid ${dealTypeIcon(t)}"></i><span>${escapeHtml(t)}</span><span class="dt-count">0</span>
+      </button>`).join('');
   }
   function syncDealTypeUI(counts) {
-    dealTypesEl.querySelectorAll('.deal-type').forEach(row => {
-      const t = row.dataset.type;
-      row.querySelector('input').checked = typeOn.get(t);
-      const n = counts.get(t) || 0;
-      row.querySelector('.dt-count').textContent = `${n.toLocaleString('en-NZ')} deal${n === 1 ? '' : 's'}`;
-      row.classList.toggle('empty', n === 0);
+    dealTypesEl.querySelectorAll('.flair').forEach(f => {
+      const t = f.dataset.type, n = counts.get(t) || 0, on = picked.has(t);
+      f.classList.toggle('on', on);
+      f.setAttribute('aria-pressed', on);
+      f.querySelector('.dt-count').textContent = n.toLocaleString('en-NZ');
+      f.classList.toggle('empty', n === 0 && !on);
     });
-    dtAllBtn.hidden = [...typeOn.values()].every(Boolean);
+    dtAllBtn.hidden = picked.size === 0;
   }
-  dealTypesEl.addEventListener('change', e => {
-    const row = e.target.closest('.deal-type');
-    if (!row) return;
-    typeOn.set(row.dataset.type, e.target.checked);
+  function toggleFlair(t) {
+    if (picked.has(t)) picked.delete(t); else picked.add(t);
     applyFilters();
-  });
+  }
   dealTypesEl.addEventListener('click', e => {
-    const btn = e.target.closest('.dt-only');
-    if (!btn) return;
-    const t = btn.closest('.deal-type').dataset.type;
-    DEAL_TYPES.forEach(x => typeOn.set(x, x === t));
-    applyFilters();
+    const f = e.target.closest('.flair');
+    if (f) toggleFlair(f.dataset.type);
   });
-  dtAllBtn.addEventListener('click', () => { DEAL_TYPES.forEach(x => typeOn.set(x, true)); applyFilters(); });
+  // Flairs on the cards work too: tap "3 Day Sale" on a card to see only those.
+  grid.addEventListener('click', e => {
+    const f = e.target.closest('.flair-link');
+    if (!f) return;
+    picked.clear(); picked.add(f.dataset.type);
+    applyFilters();
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  });
+  dtAllBtn.addEventListener('click', () => { picked.clear(); applyFilters(); });
 
   function formatPrice(p) { return p ? '$' + p.toFixed(2) : ''; }
   function escapeHtml(str) { return String(str).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
@@ -947,7 +951,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
       }
       // Counted before the type check, so each toggle shows how many it would add.
       typeCounts.set(d.type, (typeCounts.get(d.type) || 0) + 1);
-      return typeOn.get(d.type) !== false;
+      return picked.size === 0 || picked.has(d.type);
     });
     syncDealTypeUI(typeCounts);
 
@@ -1003,8 +1007,9 @@ HTML_TEMPLATE = """<!DOCTYPE html>
 
       if (d.pct || promoText || d.rewards) {
         badges += `<div class="card-badges">`;
-        if (d.rewards) badges += `<span class="badge-rewards"><i class="fa-solid fa-id-card"></i> Everyday Rewards</span>`;
-        if (promoText) badges += `<span class="badge-promo"><i class="fa-solid fa-star"></i> ${escapeHtml(promoText)}</span>`;
+        const ft = escapeHtml(d.type);
+        if (d.rewards) badges += `<span class="badge-rewards flair-link" data-type="${ft}" title="Show only ${ft}"><i class="fa-solid fa-id-card"></i> Everyday Rewards</span>`;
+        if (promoText) badges += `<span class="badge-promo flair-link" data-type="${ft}" title="Show only ${ft}"><i class="fa-solid ${dealTypeIcon(d.type)}"></i> ${escapeHtml(promoText)}</span>`;
         if (d.pct) badges += `<span class="badge-discount"><i class="fa-solid fa-tag"></i> ${d.pct}% OFF</span>`;
         badges += `</div>`;
       }
@@ -1096,7 +1101,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
     activeDept = null; activeAisle = null;
     activeCategoryKeywords = []; activeCategoryName = "All Deals";
     hideNoDiscount.checked = true;
-    DEAL_TYPES.forEach(t => typeOn.set(t, true));
+    picked.clear();
     minDiscount.value = 0;
     sortSelect.value = 'discount_desc';
     updateThenBy(true);
