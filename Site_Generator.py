@@ -165,6 +165,12 @@ HTML_TEMPLATE = """<!DOCTYPE html>
   .filter-group label { display: block; font-size: 0.8rem; font-weight: 600; margin-bottom: 0.6rem; color: var(--text-muted); text-transform: uppercase; letter-spacing: 1px; }
   .then-by { margin-top: 0.8rem; padding-left: 0.8rem; border-left: 2px solid var(--primary-glow); animation: thenByIn 0.25s ease; }
   .then-by[hidden] { display: none; }
+  .then-by-hint { margin: 0.45rem 0 0; font-size: 0.72rem; line-height: 1.35; color: var(--text-muted); }
+  .band-header { grid-column: 1 / -1; display: flex; align-items: center; gap: 0.75rem; margin: 0.6rem 0 -0.2rem; }
+  .band-header:first-child { margin-top: 0; }
+  .band-header .band-label { font-size: 0.95rem; font-weight: 800; color: var(--text-main); white-space: nowrap; }
+  .band-header .band-count { font-size: 0.72rem; font-weight: 600; color: var(--text-muted); background: var(--input-bg); border: 1px solid var(--input-border); padding: 2px 9px; border-radius: 99px; white-space: nowrap; }
+  .band-header::after { content: ""; flex: 1; height: 1px; background: var(--card-border); }
   .then-by label i { font-size: 0.7rem; margin-right: 4px; color: var(--primary); }
   @keyframes thenByIn { from { opacity: 0; transform: translateY(-4px); } to { opacity: 1; transform: none; } }
   .filter-group select { width: 100%; padding: 0.7rem; border: 1px solid var(--input-border); border-radius: 8px; font-size: 0.9rem; background: var(--input-bg); color: var(--text-main); outline: none; }
@@ -220,7 +226,25 @@ HTML_TEMPLATE = """<!DOCTYPE html>
   [data-theme="dark"] .badge-promo { color: var(--primary); }
   .badge-rewards { background: var(--rewards-bg); color: var(--rewards); padding: 3px 8px; border-radius: 5px; font-size: 0.7rem; font-weight: 700; border: 1px solid var(--rewards-border); display: inline-flex; align-items: center; gap: 4px; }
   .price-note { font-size: 0.7rem; font-weight: 600; color: var(--rewards); margin-top: 2px; }
-  #showRewards:checked + .slider { background-color: var(--rewards-switch); }
+  /* Deal type toggles (built from the data: a new promo type gets its own toggle) */
+  .deal-types-head { display: flex; align-items: center; justify-content: space-between; gap: 0.5rem; margin-bottom: 0.6rem; }
+  .deal-types-head label { margin: 0 !important; }
+  .dt-all { background: none; border: none; padding: 0; color: var(--primary); font-size: 0.72rem; font-weight: 700; cursor: pointer; }
+  .dt-all[hidden] { display: none; }
+  .deal-types { display: flex; flex-direction: column; gap: 0.45rem; }
+  .deal-type { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; column-gap: 0.75rem; row-gap: 4px; padding: 9px 12px; transition: opacity 0.2s; }
+  .deal-type.empty { opacity: 0.5; }
+  .deal-type .dt-name { grid-column: 1; grid-row: 1; min-width: 0; display: flex; align-items: center; gap: 8px; line-height: 1.25; }
+  .dt-name i { width: 16px; text-align: center; color: var(--primary); flex-shrink: 0; }
+  .deal-type.rewards .dt-name i { color: var(--rewards); }
+  .deal-type .dt-label { min-width: 0; font-size: 0.85rem; }
+  .deal-type .dt-meta { grid-column: 1; grid-row: 2; display: flex; align-items: center; gap: 6px; padding-left: 24px; }
+  .deal-type .dt-count { font-size: 0.7rem; font-weight: 600; color: var(--text-muted); }
+  .deal-type .switch { grid-column: 2; grid-row: 1 / span 2; }
+  .dt-only { background: none; border: 1px solid var(--input-border); color: var(--text-muted); font-size: 0.66rem; font-weight: 700; padding: 1px 7px; border-radius: 6px; cursor: pointer; }
+  .dt-only:hover { color: var(--primary); border-color: var(--primary); }
+  .deal-type .switch { flex-shrink: 0; }
+  .deal-type.rewards input:checked + .slider { background-color: var(--rewards-switch); }
   .badge-discount { background: var(--danger-glow); color: var(--danger); padding: 3px 8px; border-radius: 5px; font-size: 0.7rem; font-weight: 700; border: 1px solid rgba(239, 68, 68, 0.3); display: inline-flex; align-items: center; gap: 4px; }
   .card h3 { font-size: 0.95rem; margin: 0; line-height: 1.3; color: var(--text-main); font-weight: 700; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
   .price-box { margin-top: auto; padding-top: 0.6rem; border-top: 1px dashed var(--input-border); display: flex; flex-direction: column; }
@@ -301,14 +325,12 @@ HTML_TEMPLATE = """<!DOCTYPE html>
       </div>
     </div>
 
-    <div class="filter-group toggle-group">
-      <div class="toggle-container">
-        <span>Everyday Rewards Prices</span>
-        <label class="switch">
-          <input type="checkbox" id="showRewards" checked>
-          <span class="slider"></span>
-        </label>
+    <div class="filter-group">
+      <div class="deal-types-head">
+        <label>Deal Types</label>
+        <button type="button" class="dt-all" id="dtAll" hidden>Show all</button>
       </div>
+      <div class="deal-types" id="dealTypes"><!-- built from the data --></div>
     </div>
 
     <div class="filter-group">
@@ -322,6 +344,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
       <div class="then-by" id="thenByWrap">
         <label for="thenBySelect"><i class="fa-solid fa-arrow-turn-up fa-rotate-90"></i> Then By</label>
         <select id="thenBySelect"></select>
+        <p class="then-by-hint" id="thenByHint"></p>
       </div>
     </div>
 
@@ -395,6 +418,34 @@ HTML_TEMPLATE = """<!DOCTYPE html>
       !RESTRICTED_DEPT_RE.test(d.dept || "") &&
       !RESTRICTED_DEPT_RE.test(d.aisle || ""));
 
+  // ----------------------------------------------------
+  // DEAL TYPES - built from the data every time the site is generated.
+  // A promo that appears in the scrape gets its own toggle automatically;
+  // when no deals of that type are left, its toggle disappears.
+  // ----------------------------------------------------
+  const REWARDS_TYPE = 'Everyday Rewards';
+  const OTHER_TYPE = 'Other Deals';
+  function dealTypeOf(d) {
+    if (d.rewards) return REWARDS_TYPE;
+    const p = String(d.promo || '').replace(/\\s+/g, ' ').trim();
+    if (!p || /member price/i.test(p)) return OTHER_TYPE;
+    if (/^save\\b/i.test(p)) return 'Save $ Deals';
+    if (/^\\d+\\s*for\\s*\\$/i.test(p)) return 'Multibuys';
+    if (/^special$/i.test(p)) return 'Specials';
+    return p;                        // e.g. "3 Day Sale", or any brand-new promo name
+  }
+  function dealTypeIcon(t) {
+    if (t === REWARDS_TYPE) return 'fa-id-card';
+    if (t === OTHER_TYPE) return 'fa-tag';
+    if (t === 'Save $ Deals') return 'fa-piggy-bank';
+    if (t === 'Multibuys') return 'fa-layer-group';
+    if (/day/i.test(t)) return 'fa-bolt';
+    return 'fa-star';
+  }
+  // Whole-percent discount: what the badge shows is exactly what sorting
+  // and the Min Discount slider use, so the order always matches the cards.
+  const pctOf = d => (typeof d.discount_pct === 'number' && d.discount_pct > 0) ? Math.round(d.discount_pct) : 0;
+
   // Theme Toggle
   let isDark = true;
   const themeToggle = document.getElementById('themeToggle');
@@ -441,6 +492,18 @@ HTML_TEMPLATE = """<!DOCTYPE html>
   const perPageSelect = document.getElementById('perPageSelect');
 
   let filteredData = [];
+  DEALS.forEach(d => { d.type = dealTypeOf(d); d.pct = pctOf(d); });
+  const DEAL_TYPES = (() => {
+    const counts = new Map();
+    DEALS.forEach(d => counts.set(d.type, (counts.get(d.type) || 0) + 1));
+    const rank = t => t === REWARDS_TYPE ? 0 : t === OTHER_TYPE ? 2 : 1;
+    return [...counts.entries()]
+      .sort((a, b) => rank(a[0]) - rank(b[0]) || b[1] - a[1] || a[0].localeCompare(b[0]))
+      .map(([t]) => t);
+  })();
+  const typeOn = new Map(DEAL_TYPES.map(t => [t, true]));
+  const dealTypesEl = document.getElementById('dealTypes');
+  const dtAllBtn = document.getElementById('dtAll');
   let currentPage = 1;
   let itemsPerPage = parseInt(perPageSelect.value);
   let activeCategoryKeywords = [];
@@ -728,36 +791,134 @@ HTML_TEMPLATE = """<!DOCTYPE html>
     applyFilters();
   };
 
+  function buildDealTypes() {
+    dealTypesEl.innerHTML = DEAL_TYPES.map(t => `
+      <div class="toggle-container deal-type${t === REWARDS_TYPE ? ' rewards' : ''}" data-type="${escapeHtml(t)}">
+        <span class="dt-name"><i class="fa-solid ${dealTypeIcon(t)}"></i><span class="dt-label">${escapeHtml(t)}</span></span>
+        <span class="dt-meta"><span class="dt-count">0</span><button type="button" class="dt-only" title="Show only ${escapeHtml(t)}">Only</button></span>
+        <label class="switch"><input type="checkbox" checked aria-label="${escapeHtml(t)}"><span class="slider"></span></label>
+      </div>`).join('');
+  }
+  function syncDealTypeUI(counts) {
+    dealTypesEl.querySelectorAll('.deal-type').forEach(row => {
+      const t = row.dataset.type;
+      row.querySelector('input').checked = typeOn.get(t);
+      const n = counts.get(t) || 0;
+      row.querySelector('.dt-count').textContent = `${n.toLocaleString('en-NZ')} deal${n === 1 ? '' : 's'}`;
+      row.classList.toggle('empty', n === 0);
+    });
+    dtAllBtn.hidden = [...typeOn.values()].every(Boolean);
+  }
+  dealTypesEl.addEventListener('change', e => {
+    const row = e.target.closest('.deal-type');
+    if (!row) return;
+    typeOn.set(row.dataset.type, e.target.checked);
+    applyFilters();
+  });
+  dealTypesEl.addEventListener('click', e => {
+    const btn = e.target.closest('.dt-only');
+    if (!btn) return;
+    const t = btn.closest('.deal-type').dataset.type;
+    DEAL_TYPES.forEach(x => typeOn.set(x, x === t));
+    applyFilters();
+  });
+  dtAllBtn.addEventListener('click', () => { DEAL_TYPES.forEach(x => typeOn.set(x, true)); applyFilters(); });
+
   function formatPrice(p) { return p ? '$' + p.toFixed(2) : ''; }
   function escapeHtml(str) { return String(str).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
 
-  // ---- Sorting: primary + "Then By" (only options that make sense) ----
-  const byNum = (v, missing) => (typeof v === 'number' && !isNaN(v)) ? v : missing;
+  // ---- Sorting: primary + "Then By" ----
+  // Every combination follows one rule: the primary sort decides the order of
+  // groups, "Then By" decides the order inside a group, and anything still tied
+  // falls back to the primary's exact value, then the name.
+  //   Biggest Discount  -> groups = whole % (exactly what the card badge shows)
+  //   Lowest/Highest    -> groups = price ranges (shown as headings)
+  //   Name              -> no Then By
+  const num = (v, missing) => (typeof v === 'number' && !isNaN(v)) ? v : missing;
+  const byTitle = (a, b) => a.title.localeCompare(b.title);
   const SORTS = {
-    discount_desc: { label: 'Biggest Discount (%)', cmp: (a, b) => byNum(b.discount_pct, 0) - byNum(a.discount_pct, 0) },
-    price_asc:     { label: 'Lowest Price',         cmp: (a, b) => byNum(a.sale_price, Infinity) - byNum(b.sale_price, Infinity) || 0 },
-    price_desc:    { label: 'Highest Price',        cmp: (a, b) => byNum(b.sale_price, -Infinity) - byNum(a.sale_price, -Infinity) || 0 },
-    title_asc:     { label: 'Name (A-Z)',           cmp: (a, b) => a.title.localeCompare(b.title) },
+    discount_desc: { label: 'Biggest Discount (%)', cmp: (a, b) => b.pct - a.pct },
+    price_asc:     { label: 'Lowest Price',         cmp: (a, b) => num(a.sale_price, Infinity) - num(b.sale_price, Infinity) },
+    price_desc:    { label: 'Highest Price',        cmp: (a, b) => num(b.sale_price, -Infinity) - num(a.sale_price, -Infinity) },
+    title_asc:     { label: 'Name (A-Z)',           cmp: byTitle },
   };
-  // Name ties almost never happen, so it gets no second sort. A price sort
-  // doesn't offer the other price direction (it would do nothing).
+  // Exact (unrounded) values, used only to settle remaining ties.
+  const EXACT = {
+    discount_desc: (a, b) => num(b.discount_pct, 0) - num(a.discount_pct, 0),
+    price_asc:     SORTS.price_asc.cmp,
+    price_desc:    SORTS.price_desc.cmp,
+    title_asc:     byTitle,
+  };
   const THEN_BY = {
-    discount_desc: ['price_asc', 'price_desc', 'title_asc'],
-    price_asc:     ['discount_desc', 'title_asc'],
-    price_desc:    ['discount_desc', 'title_asc'],
+    discount_desc: [['price_asc', 'Lowest Price'], ['price_desc', 'Highest Price'], ['title_asc', 'Name (A-Z)']],
+    price_asc:     [['discount_desc', 'Biggest Discount (%)'], ['title_asc', 'Name (A-Z)'], ['none', 'Nothing (exact price order)']],
+    price_desc:    [['discount_desc', 'Biggest Discount (%)'], ['title_asc', 'Name (A-Z)'], ['none', 'Nothing (exact price order)']],
     title_asc:     [],
   };
   const THEN_BY_DEFAULT = { discount_desc: 'price_asc', price_asc: 'discount_desc', price_desc: 'discount_desc' };
+  const THEN_BY_HINT = {
+    discount_desc: 'Deals with the same % off (as shown on the card) are ordered by this.',
+    price_asc: 'Groups prices into ranges, then sorts inside each range.',
+    price_desc: 'Groups prices into ranges, then sorts inside each range.',
+  };
+
+  const PRICE_BANDS = [2, 5, 10, 20, 50, 100];
+  function priceBand(p) {
+    if (typeof p !== 'number' || isNaN(p)) return -1;
+    let i = 0;
+    while (i < PRICE_BANDS.length && p >= PRICE_BANDS[i]) i++;
+    return i;
+  }
+  function bandLabel(i) {
+    if (i < 0) return 'No price';
+    if (i === 0) return `Under $${PRICE_BANDS[0]}`;
+    if (i === PRICE_BANDS.length) return `$${PRICE_BANDS[i - 1]}+`;
+    return `$${PRICE_BANDS[i - 1]} – $${PRICE_BANDS[i]}`;
+  }
+  let groupByBand = false;   // true while a price sort is grouping into ranges
+
   const thenBySelect = document.getElementById('thenBySelect');
   const thenByWrap = document.getElementById('thenByWrap');
+  const thenByHint = document.getElementById('thenByHint');
 
   function updateThenBy(forceDefault) {
     const options = THEN_BY[sortSelect.value] || [];
     if (!options.length) { thenByWrap.hidden = true; thenBySelect.innerHTML = ''; return; }
-    const keep = !forceDefault && options.includes(thenBySelect.value) ? thenBySelect.value : THEN_BY_DEFAULT[sortSelect.value];
-    thenBySelect.innerHTML = options.map(o => `<option value="${o}">${SORTS[o].label}</option>`).join('');
+    const values = options.map(o => o[0]);
+    const keep = !forceDefault && values.includes(thenBySelect.value) ? thenBySelect.value : THEN_BY_DEFAULT[sortSelect.value];
+    thenBySelect.innerHTML = options.map(([v, label]) => `<option value="${v}">${label}</option>`).join('');
     thenBySelect.value = keep;
+    thenByHint.textContent = THEN_BY_HINT[sortSelect.value] || '';
     thenByWrap.hidden = false;
+  }
+
+  // Group key for the primary sort (smaller = earlier).
+  function groupKey(d, mode) {
+    if (mode === 'discount_desc') return -d.pct;
+    if (mode === 'price_asc' || mode === 'price_desc') {
+      const b = priceBand(d.sale_price);
+      if (b < 0) return Infinity;                 // no price always last
+      return mode === 'price_desc' ? -b : b;
+    }
+    return 0;
+  }
+
+  function sortData() {
+    const mode = SORTS[sortSelect.value] ? sortSelect.value : 'discount_desc';
+    const then = (THEN_BY[mode] || []).some(o => o[0] === thenBySelect.value) ? thenBySelect.value : 'none';
+    const secondary = SORTS[then] ? SORTS[then].cmp : null;
+    const isPrice = mode === 'price_asc' || mode === 'price_desc';
+    groupByBand = isPrice && !!secondary;
+    const grouped = !!secondary;                  // title_asc / 'none' => plain exact order
+
+    filteredData.sort((a, b) => {
+      if (grouped) {
+        const ga = groupKey(a, mode), gb = groupKey(b, mode);
+        if (ga !== gb) return ga < gb ? -1 : 1;
+        return secondary(a, b) || EXACT[mode](a, b) || byTitle(a, b);
+      }
+      return SORTS[mode].cmp(a, b) || EXACT[mode](a, b) || byTitle(a, b);
+    });
   }
 
   function applyFilters() {
@@ -769,9 +930,9 @@ HTML_TEMPLATE = """<!DOCTYPE html>
     if (q) resultsHeading.innerHTML = `Search: "${q}"`;
     else resultsHeading.innerHTML = activeCategoryName;
 
+    const typeCounts = new Map();
     filteredData = DEALS.filter(d => {
-      if (d.rewards && !showRewards.checked) return false;
-      const pct = d.discount_pct || 0;
+      const pct = d.pct;
       if (hideNoDisc && pct <= 0) return false;
       if (pct < minPct) return false;
       
@@ -784,13 +945,13 @@ HTML_TEMPLATE = """<!DOCTYPE html>
       if (!q && activeCategoryKeywords.length > 0) {
         if (!activeCategoryKeywords.some(kw => title.includes(kw))) return false;
       }
-      return true;
+      // Counted before the type check, so each toggle shows how many it would add.
+      typeCounts.set(d.type, (typeCounts.get(d.type) || 0) + 1);
+      return typeOn.get(d.type) !== false;
     });
+    syncDealTypeUI(typeCounts);
 
-    const primary = SORTS[sortSelect.value] || SORTS.discount_desc;
-    const secondary = thenBySelect.value ? SORTS[thenBySelect.value] : null;
-    filteredData.sort((a, b) =>
-      primary.cmp(a, b) || (secondary ? secondary.cmp(a, b) : 0) || a.title.localeCompare(b.title));
+    sortData();
 
     currentPage = 1;
     renderGrid();
@@ -812,7 +973,21 @@ HTML_TEMPLATE = """<!DOCTYPE html>
     const paginatedItems = filteredData.slice(startIndex, startIndex + itemsPerPage);
     const frag = document.createDocumentFragment();
 
+    const bandCounts = {};
+    if (groupByBand) filteredData.forEach(d => { const k = priceBand(d.sale_price); bandCounts[k] = (bandCounts[k] || 0) + 1; });
+    let lastBand = null;
+
     paginatedItems.forEach(d => {
+      if (groupByBand) {
+        const band = priceBand(d.sale_price);
+        if (band !== lastBand) {
+          const header = document.createElement('div');
+          header.className = 'band-header';
+          header.innerHTML = `<span class="band-label">${bandLabel(band)}</span><span class="band-count">${bandCounts[band]} deals</span>`;
+          frag.appendChild(header);
+          lastBand = band;
+        }
+      }
       const card = document.createElement('div');
       card.className = 'card';
 
@@ -826,11 +1001,11 @@ HTML_TEMPLATE = """<!DOCTYPE html>
 
       if (d.rewards && /rewards|club|member/i.test(promoText)) promoText = "";
 
-      if (d.discount_pct || promoText || d.rewards) {
+      if (d.pct || promoText || d.rewards) {
         badges += `<div class="card-badges">`;
         if (d.rewards) badges += `<span class="badge-rewards"><i class="fa-solid fa-id-card"></i> Everyday Rewards</span>`;
         if (promoText) badges += `<span class="badge-promo"><i class="fa-solid fa-star"></i> ${escapeHtml(promoText)}</span>`;
-        if (d.discount_pct) badges += `<span class="badge-discount"><i class="fa-solid fa-tag"></i> ${d.discount_pct}% OFF</span>`;
+        if (d.pct) badges += `<span class="badge-discount"><i class="fa-solid fa-tag"></i> ${d.pct}% OFF</span>`;
         badges += `</div>`;
       }
       
@@ -914,8 +1089,6 @@ HTML_TEMPLATE = """<!DOCTYPE html>
   thenBySelect.addEventListener('change', applyFilters);
   minDiscount.addEventListener('input', applyFilters);
   hideNoDiscount.addEventListener('change', applyFilters);
-  const showRewards = document.getElementById('showRewards');
-  showRewards.addEventListener('change', applyFilters);
 
   // Clicking the logo puts everything back to how the site first loads.
   function resetAll() {
@@ -923,7 +1096,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
     activeDept = null; activeAisle = null;
     activeCategoryKeywords = []; activeCategoryName = "All Deals";
     hideNoDiscount.checked = true;
-    showRewards.checked = true;
+    DEAL_TYPES.forEach(t => typeOn.set(t, true));
     minDiscount.value = 0;
     sortSelect.value = 'discount_desc';
     updateThenBy(true);
@@ -938,6 +1111,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
   document.getElementById('brandReset').addEventListener('click', resetAll);
 
   updateThenBy(true);
+  buildDealTypes();
   initCategories();
   applyFilters();
 </script>
